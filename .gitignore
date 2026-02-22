@@ -13,3 +13,7 @@ venv/
 
 # OS
 .DS_Store
+
+# Logs
+rpi4/logs/
+*.log
