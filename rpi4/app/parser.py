@@ -26,7 +26,7 @@ def parse_cov_frame(line: str):
             "EP2": int(parts[7]),
         }
 
-    except Exception:
+    except (TypeError, ValueError, IndexError):
         return None
 
 
@@ -40,6 +40,9 @@ def parse_reg_frame(line: str):
     try:
         rid, data = line.split(":", 1)
         idx = int(rid[1])
+
+        if idx not in (1, 2):
+            return None
 
         parts = data.split(",")
         if len(parts) != 7:
@@ -56,7 +59,7 @@ def parse_reg_frame(line: str):
             "R3111": float(parts[6]),
         }
 
-    except Exception:
+    except (TypeError, ValueError, IndexError):
         return None
 
 def parse_fve_load_frame(line: str):
@@ -67,7 +70,10 @@ def parse_fve_load_frame(line: str):
         return None
 
     try:
-        value = int(line.split(":")[1])
+        _, raw_value = line.split(":", 1)
+        value = int(raw_value)
+        if value not in (0, 1):
+            return None
         return {"LOAD": value}
-    except Exception:
+    except (TypeError, ValueError):
         return None
