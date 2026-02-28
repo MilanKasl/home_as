@@ -1,5 +1,5 @@
 # relay_control.py
-from machine import Pin
+from machine import Pin  # type: ignore
 
 class RelayControl:
     def __init__(self, pin: Pin, active_high=True):

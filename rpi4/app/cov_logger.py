@@ -4,7 +4,7 @@ from datetime import date
 
 
 class CovLogger:
-    def __init__(self, base_dir="logs/cov"):
+    def __init__(self, base_dir="/home/milan/logs/home_as/cov"):
         self.base_dir = base_dir
         os.makedirs(base_dir, exist_ok=True)
         self.last_state = None

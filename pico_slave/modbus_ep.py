@@ -1,6 +1,6 @@
 
 # modbus_ep.py
-from machine import UART, Pin
+from machine import UART, Pin  # type: ignore
 import time
 
 # ======= UART1 pro RS485 =======

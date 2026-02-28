@@ -4,76 +4,53 @@ import time
 
 class PowerLogic:
     IDLE = 0
-    TEST = 1
-    RUN  = 2
+    RUN  = 1
 
     def __init__(
         self,
-        batt_on=13.7,
-        batt_off=13.4,
+        batt_on=13.35,
+        batt_off=13.25,
+        batt_protect=13.15,
         power_max=1000,
         load_power=200,     # výkon zátěže (W)
-        delay_on=300,       # x min stabilní plná baterie
-        delay_off=30,       # 30 s podmínka vypnutí
-        test_time=20,       # 20 s test přebytku
-        margin=0.1          # povolený pokles napětí během testu
+        delay_on=300,       # s stabilní plná baterie
+        delay_off=60        # 60 s podmínka vypnutí
     ):
         self.batt_on = batt_on
         self.batt_off = batt_off
+        self.batt_protect = batt_protect
         self.power_max = power_max
         self.load_power = load_power
 
         self.delay_on_ms = delay_on * 1000
         self.delay_off_ms = delay_off * 1000
-        self.test_time_ms = test_time * 1000
-
-        self.margin = margin
 
         self.state = self.IDLE
         self.timer = None
-        self.test_start_voltage = None
 
-    def update(self, batt_v, pv_power):
+    def update(self, batt_v, pv_power, sun_ok=True):
         now = time.ticks_ms()
+
+        # Tvrdá ochrana baterie: okamžité vypnutí vytěžování pod ochraným prahem.
+        if batt_v <= self.batt_protect:
+            self.state = self.IDLE
+            self.timer = None
+            return False
 
         # ================= IDLE =================
         if self.state == self.IDLE:
-
-            if batt_v >= self.batt_on:
+            if sun_ok and batt_v >= self.batt_on:
                 if self.timer is None:
                     self.timer = now
                 elif time.ticks_diff(now, self.timer) >= self.delay_on_ms:
-                    # přechod do TEST
-                    self.state = self.TEST
-                    self.timer = now
-                    self.test_start_voltage = batt_v
+                    # přechod rovnou do RUN (test odstraněn)
+                    self.state = self.RUN
+                    self.timer = None
+                    return True
             else:
                 self.timer = None
 
             return False
-
-        # ================= TEST =================
-        if self.state == self.TEST:
-
-            # pokud napětí během testu výrazně klesne → konec
-            if batt_v < self.test_start_voltage - self.margin:
-                self.state = self.IDLE
-                self.timer = None
-                return False
-
-            # pokud test doběhl
-            if time.ticks_diff(now, self.timer) >= self.test_time_ms:
-                # potvrzení přebytku
-                if pv_power > self.load_power:
-                    self.state = self.RUN
-                    self.timer = None
-                    return True
-                else:
-                    self.state = self.IDLE
-                    self.timer = None
-                    return False
-
-            return True  # během testu drž zátěž zapnutou
 
         # ================= RUN =================
         if self.state == self.RUN:

@@ -1,4 +1,4 @@
-from machine import PWM
+from machine import PWM  # type: ignore
 
 class PWMControl:
     def __init__(self, pin, freq=1500):

@@ -1,5 +1,5 @@
 # mega_protocol.py
-from machine import UART, Pin
+from machine import UART, Pin  # type: ignore
 
 # ======= UART0 pro Mega =======
 uart_out = UART(0, baudrate=9600, tx=Pin(0), rx=Pin(1))

@@ -1,5 +1,5 @@
 
-DEV_MODE = True          # při ladění True, v provozu False
+DEV_MODE = False          # při ladění True, v provozu False
 WDT_START_DELAY = 60000  # 60 s po startu napájení
 WDT_TIMEOUT = 8000       # HW maximum pro RP2350
 
@@ -13,6 +13,11 @@ FVE_RELAY_PIN = 16      # Pico → DC měnič (nadvýroba)
 # ======== PWM ========
 PWM_PIN = 14
 
+# ======== Soumrakový vstup ========
+SUN_SENSOR_PIN = 13          # GPIO vstup z relé/čidla
+SUN_SENSOR_PULLUP = True     # True = interní pull-up (kontakt na GND)
+SUN_SENSOR_ACTIVE_LEVEL = 0  # 0 = aktivní v log.0, 1 = aktivní v log.1
+
 # ======== RS485 ========
 RS485_TX = 4
 RS485_RX = 5
@@ -22,10 +27,9 @@ UART0_TX = 0
 UART0_RX = 1
 
 # ======== Logika nadvýroby ========
-BATT_ON = 13.7
-BATT_OFF = 13.4
+BATT_ON = 13.35
+BATT_OFF = 13.25
+BATT_PROTECT = 13.15  # okamžitá ochrana baterie při vytěžování (V)
 LOAD_POWER = 200   # skutečný výkon zátěže (W)
 
 POWER_MAX = 1000
-
-

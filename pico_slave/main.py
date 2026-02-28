@@ -1,4 +1,4 @@
-from machine import WDT, Pin
+from machine import WDT, Pin  # type: ignore
 import time
 
 from config import *
@@ -12,6 +12,8 @@ from mega_protocol import poll_mega, send_frame
 FVE_REPEAT_INTERVAL = 30000  # 30 sekund
 last_fve_send_time = 0
 fve_state_last = None
+fve_state_current = 0
+cov_log_request = 0
 
 # ================= Watchdog řízení =================
 wdt = None
@@ -26,11 +28,14 @@ PWM_PIN       = 14
 cov_relay = RelayControl(Pin(COV_RELAY_PIN))
 fve_relay = RelayControl(Pin(FVE_RELAY_PIN))
 pwm = PWMControl(Pin(PWM_PIN))   # test: žárovka / MOSFET
+sun_pull = Pin.PULL_UP if SUN_SENSOR_PULLUP else None
+sun_input = Pin(SUN_SENSOR_PIN, Pin.IN, sun_pull)
 
 # ================= Logika ===================
 logic = PowerLogic(
     batt_on=BATT_ON,
     batt_off=BATT_OFF,
+    batt_protect=BATT_PROTECT,
     load_power=LOAD_POWER,   # nový parametr
     power_max=POWER_MAX,
 )
@@ -41,11 +46,21 @@ fve_relay.off()
 pwm.off()
 
 # ================= Mega callback ============
-def handle_log(val):
-    if val == "1":
+def apply_cov_output():
+    if cov_log_request or fve_state_current:
         cov_relay.on()
     else:
         cov_relay.off()
+
+
+def handle_log(val):
+    global cov_log_request
+    cov_log_request = 1 if val == "1" else 0
+    apply_cov_output()
+
+
+def is_sun_ok():
+    return 1 if sun_input.value() == SUN_SENSOR_ACTIVE_LEVEL else 0
 
 # ================= Časování ================
 last_send = time.ticks_ms() - SEND_INTERVAL_MS
@@ -87,7 +102,7 @@ while True:
 
             # ===== FVE logika jen pro regulátor 1 =====
             if slave == 1:
-                enabled = logic.update(batt_v, pv_power)
+                enabled = logic.update(batt_v, pv_power, sun_ok=is_sun_ok())
 
                 if enabled:
                     fve_relay.on()
@@ -97,6 +112,8 @@ while True:
                     pwm.off()
                     fve_relay.off()
                     fve_state = 0
+                fve_state_current = fve_state
+                apply_cov_output()
 
                 # ===== Odeslat změnu stavu =====
                 now = time.ticks_ms()

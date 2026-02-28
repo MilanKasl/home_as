@@ -25,6 +25,8 @@ def log(*args):
 # STAV LOGIKY
 # ==============================
 last_air_state = None
+AIR_REPEAT_INTERVAL = 60000  # 60 sekund
+last_air_send_time = 0
 last_fve_state = None
 FVE_REPEAT_INTERVAL = 60000  # 60 sekund
 last_fve_send_time = 0
@@ -88,10 +90,12 @@ while True:
 
         # ----- LOGIKA -----
         air = state.stat["AIR"]
-        if last_air_state is None:
+        if last_air_state is None or air != last_air_state:
             last_air_state = air
-        elif air != last_air_state:
-            last_air_state = air
+            last_air_send_time = now
+            send_regulator_logic(uart_fve, air)
+        elif time.ticks_diff(now, last_air_send_time) > AIR_REPEAT_INTERVAL:
+            last_air_send_time = now
             send_regulator_logic(uart_fve, air)
 
         # ----- USB OUTPUT -----
@@ -151,6 +155,5 @@ while True:
         if wdt:
             wdt.feed()
     time.sleep_ms(5)
-
 
 

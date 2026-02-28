@@ -7,7 +7,7 @@ LOG_INTERVAL = 300  # 5 minut
 
 
 class RegulatorLogger:
-    def __init__(self, base_dir="logs/regulators"):
+    def __init__(self, base_dir="/home/milan/logs/home_as/regulators"):
         self.base_dir = base_dir
         os.makedirs(base_dir, exist_ok=True)
 
