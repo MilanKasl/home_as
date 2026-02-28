@@ -8,9 +8,9 @@ class PowerLogic:
 
     def __init__(
         self,
-        batt_on=13.35,
-        batt_off=13.25,
-        batt_protect=13.15,
+        batt_on=13.45,
+        batt_off=13.30,
+        batt_protect=13.20,
         power_max=1000,
         load_power=200,     # výkon zátěže (W)
         delay_on=300,       # s stabilní plná baterie

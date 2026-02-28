@@ -27,9 +27,9 @@ UART0_TX = 0
 UART0_RX = 1
 
 # ======== Logika nadvýroby ========
-BATT_ON = 13.35
-BATT_OFF = 13.25
-BATT_PROTECT = 13.15  # okamžitá ochrana baterie při vytěžování (V)
+BATT_ON = 13.45
+BATT_OFF = 13.30
+BATT_PROTECT = 13.20  # okamžitá ochrana baterie při vytěžování (V)
 LOAD_POWER = 200   # skutečný výkon zátěže (W)
 
 POWER_MAX = 1000
