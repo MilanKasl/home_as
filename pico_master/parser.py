@@ -27,27 +27,31 @@ def parse_cov(frame, state):
 
 def parse_reg(frame, state):
     # formát:
-    # R1:BATT,PWR,ENG,CH,310E,3304,3111
+    # R1:BATT,PWR,ENG_DAY,ENG_MONTH,ENG_YEAR,CH,3302,3303,3111
     if not frame.startswith("R"):
         return
 
     try:
         rid, data = frame.split(":")
         idx = int(rid[1])
+        if idx != 1:
+            return
         vals = data.split(",")
 
-        if len(vals) != 7:
+        if len(vals) != 9:
             return
 
         r = state.reg[idx]
 
         r["BATT"]  = float(vals[0])
         r["PWR"]   = float(vals[1])
-        r["ENG"]   = float(vals[2])
-        r["CH"]    = int(vals[3])
-        r["R310E"] = float(vals[4])
-        r["R3304"] = float(vals[5])
-        r["R3111"] = float(vals[6])
+        r["ENG_DAY"] = float(vals[2])
+        r["ENG_MONTH"] = float(vals[3])
+        r["ENG_YEAR"] = float(vals[4])
+        r["CH"] = int(vals[5])
+        r["VBAT_MAX_DAY"] = float(vals[6])
+        r["VBAT_MIN_DAY"] = float(vals[7])
+        r["R3111"] = float(vals[8])
 
     except:
         pass

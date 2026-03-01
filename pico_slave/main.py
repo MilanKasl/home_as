@@ -68,23 +68,23 @@ last_send = time.ticks_ms() - SEND_INTERVAL_MS
 
 # ================= Hlavní smyčka ============
 while True:
-# ===== Watchdog aktivace =====
-    if not DEV_MODE:
-        if wdt is None:
-            if time.ticks_diff(time.ticks_ms(), start_time) > WDT_START_DELAY:
-                wdt = WDT(timeout=WDT_TIMEOUT)
+    try:
+        # ===== Watchdog aktivace =====
+        if not DEV_MODE:
+            if wdt is None:
+                if time.ticks_diff(time.ticks_ms(), start_time) > WDT_START_DELAY:
+                    wdt = WDT(timeout=WDT_TIMEOUT)
 
-        if wdt:
-            wdt.feed()
+            if wdt:
+                wdt.feed()
 
-    # 1) Mega polling (non-blocking)
-    poll_mega(on_log=handle_log)
+        # 1) Mega polling (non-blocking)
+        poll_mega(on_log=handle_log)
 
-    # 2) Periodické čtení regulátorů
-    if time.ticks_diff(time.ticks_ms(), last_send) >= SEND_INTERVAL_MS:
-        last_send = time.ticks_ms()
-
-        for slave in (1, 2):
+        # 2) Periodické čtení regulátoru 1
+        if time.ticks_diff(time.ticks_ms(), last_send) >= SEND_INTERVAL_MS:
+            last_send = time.ticks_ms()
+            slave = 1
             data = read_regulator(slave)
             if not data:
                 print(f"[Reg {slave}] žádná data")
@@ -93,17 +93,22 @@ while True:
             (
                 batt_v,
                 pv_power,
-                extra,
+                eng_today,
+                eng_month,
+                eng_year,
                 chg,
-                v310e,
-                v3304,
+                v3302,
+                v3303,
                 v3111,
             ) = data
 
-            # ===== FVE logika jen pro regulátor 1 =====
-            if slave == 1:
+            # Při ztrátě linky držet bezpečný stav a nezastavit smyčku.
+            if batt_v is None or pv_power is None:
+                pwm.off()
+                fve_relay.off()
+                fve_state = 0
+            else:
                 enabled = logic.update(batt_v, pv_power, sun_ok=is_sun_ok())
-
                 if enabled:
                     fve_relay.on()
                     pwm.set(logic.pwm_value(pv_power))
@@ -112,39 +117,49 @@ while True:
                     pwm.off()
                     fve_relay.off()
                     fve_state = 0
-                fve_state_current = fve_state
-                apply_cov_output()
 
-                # ===== Odeslat změnu stavu =====
-                now = time.ticks_ms()
+            fve_state_current = fve_state
+            apply_cov_output()
 
-                # ===== při změně okamžitě =====
-                if fve_state_last is None or fve_state != fve_state_last:
-                    fve_state_last = fve_state
-                    last_fve_send_time = now
-                    send_frame(f"<FVE:{fve_state}>")
+            # ===== Odeslat změnu stavu =====
+            now = time.ticks_ms()
 
-                # ===== periodické opakování =====
-                elif time.ticks_diff(now, last_fve_send_time) > FVE_REPEAT_INTERVAL:
-                    last_fve_send_time = now
-                    send_frame(f"<FVE:{fve_state}>")
-                    
-            # ===== Debug =====
+            # ===== při změně okamžitě =====
+            if fve_state_last is None or fve_state != fve_state_last:
+                fve_state_last = fve_state
+                last_fve_send_time = now
+                send_frame(f"<FVE:{fve_state}>")
+
+            # ===== periodické opakování =====
+            elif time.ticks_diff(now, last_fve_send_time) > FVE_REPEAT_INTERVAL:
+                last_fve_send_time = now
+                send_frame(f"<FVE:{fve_state}>")
+
             # ===== Odeslání rámce na druhé Pico =====
-            frame = "<R{}:{:.2f},{:.0f},{:.2f},{},{:.0f},{:.2f},{:.0f}>".format(
+            if None in (batt_v, pv_power, eng_today, eng_month, eng_year, chg, v3302, v3303, v3111):
+                print(f"[Reg {slave}] neplatná/neúplná data")
+                continue
+
+            frame = "<R{}:{:.2f},{:.0f},{:.0f},{:.0f},{:.0f},{},{:.2f},{:.2f},{:.0f}>".format(
                 slave,
                 batt_v,
                 pv_power,
-                extra,
+                eng_today,
+                eng_month,
+                eng_year,
                 chg,
-                v310e,
-                v3304,
+                v3302,
+                v3303,
                 v3111,
             )
 
             send_frame(frame)
-            print(f"<FVE:{fve_state}>")
+            print(f"<FVE:{fve_state_current}>")
 
             # Debug do USB
             print(frame)
             time.sleep_ms(1)
+    except Exception as e:
+        # Poslední záchrana: držet firmware živý i při neočekávané chybě.
+        print("Loop error:", e)
+        time.sleep_ms(20)

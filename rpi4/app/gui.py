@@ -22,7 +22,6 @@ DEBUG = False
 
 BATT_OFFSET = {
     1: -0.1,   # regulátor 1
-    2: +0.1,   # regulátor 2
 }
 
 
@@ -155,7 +154,7 @@ class DashboardGUI:
                         if data:
                             self.state.update_fve_load(data)
                             self.last_data_ts = time.time() 
-                            self.reg_logger.update_load(self.state.fve_load)                          
+                            self.reg_logger.update_load(self.state.fve_load, self.state.regulators)
 
                 # DS18B20
                 now = time.time()
@@ -210,6 +209,35 @@ class DashboardGUI:
         tank = self.state.tank
 
         # === ČOV ===
+        active_items = []
+        has_tech = False
+        has_float = False
+        for key, label in [
+            ("pump1", "Pumpa 1"),
+            ("pump2", "Pumpa 2"),
+            ("air", "Vzduchování"),
+            ("float4", "Plovák 4"),
+            ("float3", "Plovák 3"),
+            ("float2", "Plovák 2"),
+            ("float1", "Plovák 1"),
+        ]:
+            if getattr(m, key):
+                active_items.append(label)
+                if key in ("pump1", "pump2", "air"):
+                    has_tech = True
+                else:
+                    has_float = True
+
+        if active_items:
+            active_text = "\n".join(f"• {item}" for item in active_items)
+        else:
+            active_text = "• Žádný"
+        self.set_value("main_cov_active", active_text)
+        cov_lbl = self.values.get("main_cov_active")
+        if cov_lbl:
+            color = "#ff9800" if has_float else GREEN_OK if has_tech else FG_MUTED
+            cov_lbl.config(fg=color)
+
         if m.temp_water is not None:
             self.set_value(
                 "main_temp_water",
@@ -224,7 +252,7 @@ class DashboardGUI:
 
 
         # === FVE – souhrn ===
-        for rid in (1, 2):
+        for rid in (1,):
             r = self.state.regulators.get(rid)
             if not r:
                 continue
@@ -234,9 +262,16 @@ class DashboardGUI:
                 f"{self.batt_display(rid, r.batt):.2f} V"
             )
 
-
-            self.set_value(f"main_r{rid}_energy", f"{r.energy:.0f} Wh")
+            self.set_value(f"main_r{rid}_power", f"{r.power:.0f} W")
+            self.set_value(f"main_r{rid}_energy_day", f"{r.energy_today:.0f} W")
+            self.set_value(f"main_r{rid}_temp", f"{r.r3111:.0f} °C")
             self.set_charge_state(f"main_r{rid}_state", self.charge_text(r.charge_state))
+
+        load = self.state.fve_load
+        self.set_value("main_fve_load", "⇧ ZAPNUTO" if load == 1 else "VYPNUTO")
+        load_lbl = self.values.get("main_fve_load")
+        if load_lbl:
+            load_lbl.config(fg="#ff9800" if load == 1 else FG_MUTED)
 
         # === TEPLOTY NÁDRŽE ===
         if tank.get("TOP") is not None:
@@ -254,13 +289,15 @@ class DashboardGUI:
 
 
     def update_right_panel(self):
-        for rid in (1, 2):
+        for rid in (1,):
             r = self.state.regulators[rid]
             self.set_value(f"r{rid}_batt", f"{r.batt:.2f}")
             self.set_value(f"r{rid}_power", f"{r.power:.0f}")
-            self.set_value(f"r{rid}_energy", f"{r.energy:.0f}")
-            self.set_value(f"r{rid}_310e", f"{r.r310e:.0f}")
-            self.set_value(f"r{rid}_3304", f"{r.r3304:.0f}")
+            self.set_value(f"r{rid}_energy_day", f"{r.energy_today:.0f}")
+            self.set_value(f"r{rid}_energy_month", f"{r.energy_month:.0f}")
+            self.set_value(f"r{rid}_energy_year", f"{r.energy_year:.0f}")
+            self.set_value(f"r{rid}_vmax", f"{r.vbat_max_day:.2f}")
+            self.set_value(f"r{rid}_vmin", f"{r.vbat_min_day:.2f}")
             self.set_value(f"r{rid}_3111", f"{r.r3111:.0f}")
             self.set_charge_state(f"r{rid}_state", self.charge_text(r.charge_state))
 
@@ -386,7 +423,7 @@ class DashboardGUI:
             self.set_value("cov_temp_air", f"{m.temp_air:.1f} °C")
 
     def update_fve_view(self):
-        for rid in (1, 2):
+        for rid in (1,):
             r = self.state.regulators.get(rid)
             if not r:
                 continue
@@ -397,24 +434,16 @@ class DashboardGUI:
             )
 
             self.set_value(f"fve{rid}_power",  f"{r.power:.0f} W")
-            self.set_value(f"fve{rid}_energy", f"{r.energy:.0f} Wh")
-            self.set_value(f"fve{rid}_3304",   f"{r.r3304:.0f} Wh")
-            self.set_value(f"fve{rid}_310e",   f"{r.r310e:.0f} W")
+            self.set_value(f"fve{rid}_energy_day", f"{r.energy_today:.0f} W")
+            self.set_value(f"fve{rid}_energy_month", f"{r.energy_month / 1000.0:.2f} kWh")
+            self.set_value(f"fve{rid}_energy_year", f"{r.energy_year / 1000.0:.2f} kWh")
+            self.set_value(f"fve{rid}_vmax",   f"{r.vbat_max_day:.2f} V")
+            self.set_value(f"fve{rid}_vmin",   f"{r.vbat_min_day:.2f} V")
             self.set_value(f"fve{rid}_3111",   f"{r.r3111:.0f} °C")
             self.set_charge_state(
                 f"fve{rid}_state",
                 self.charge_text(r.charge_state)
             )
-            load = self.state.fve_load
-
-            text = "⇧ ZAPNUTO" if load == 1 else "VYPNUTO"
-            self.set_value("fve_load", f"⇧ Vytěžování: {text}")
-
-            lbl = self.values.get("fve_load")
-            if lbl:
-                lbl.config(
-                    fg="#ff9800" if load == 1 else FG_MUTED
-                )            
 
 
     # =====================================================

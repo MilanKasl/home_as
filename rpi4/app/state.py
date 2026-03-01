@@ -53,16 +53,22 @@ class RegulatorView:
     def power(self): return self._r["PWR"]
 
     @property
-    def energy(self): return self._r["ENG"]
+    def energy_today(self): return self._r["ENG_DAY"]
+
+    @property
+    def energy_month(self): return self._r["ENG_MONTH"]
+
+    @property
+    def energy_year(self): return self._r["ENG_YEAR"]
 
     @property
     def charge_state(self): return self._r["CH"]
 
     @property
-    def r310e(self): return self._r["R310E"]
+    def vbat_max_day(self): return self._r["VBAT_MAX_DAY"]
 
     @property
-    def r3304(self): return self._r["R3304"]
+    def vbat_min_day(self): return self._r["VBAT_MIN_DAY"]
 
     @property
     def r3111(self): return self._r["R3111"]
@@ -90,19 +96,12 @@ class SystemState:
             1: {
                 "BATT": 0.0,
                 "PWR": 0.0,
-                "ENG": 0.0,
+                "ENG_DAY": 0.0,
+                "ENG_MONTH": 0.0,
+                "ENG_YEAR": 0.0,
                 "CH": 0,
-                "R310E": 0.0,
-                "R3304": 0.0,
-                "R3111": 0.0,
-            },
-            2: {
-                "BATT": 0.0,
-                "PWR": 0.0,
-                "ENG": 0.0,
-                "CH": 0,
-                "R310E": 0.0,
-                "R3304": 0.0,
+                "VBAT_MAX_DAY": 0.0,
+                "VBAT_MIN_DAY": 0.0,
                 "R3111": 0.0,
             },
         }
@@ -112,7 +111,6 @@ class SystemState:
         self.monitoring = MonitoringView(self.cov)
         self.regulators = {
             1: RegulatorView(self.reg[1]),
-            2: RegulatorView(self.reg[2]),
         }
 
     #čidla aku
@@ -155,11 +153,13 @@ class SystemState:
 
         self.reg[idx]["BATT"] = data["BATT"]
         self.reg[idx]["PWR"] = data["PWR"]
-        self.reg[idx]["ENG"] = data["ENG"]
+        self.reg[idx]["ENG_DAY"] = data["ENG_DAY"]
+        self.reg[idx]["ENG_MONTH"] = data["ENG_MONTH"]
+        self.reg[idx]["ENG_YEAR"] = data["ENG_YEAR"]
         self.reg[idx]["CH"] = data["CH"]
 
-        self.reg[idx]["R310E"] = data["R310E"]
-        self.reg[idx]["R3304"] = data["R3304"]
+        self.reg[idx]["VBAT_MAX_DAY"] = data["VBAT_MAX_DAY"]
+        self.reg[idx]["VBAT_MIN_DAY"] = data["VBAT_MIN_DAY"]
         self.reg[idx]["R3111"] = data["R3111"]
 
     def update_fve_load(self, data: dict):

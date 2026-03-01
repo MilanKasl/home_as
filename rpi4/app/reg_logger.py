@@ -13,7 +13,6 @@ class RegulatorLogger:
 
         self.last_log_ts = {
             1: 0,
-            2: 0,
         }
         self.last_load_state = None
 
@@ -25,6 +24,20 @@ class RegulatorLogger:
         with open(self._logfile_path(), "a", encoding="utf-8") as f:
             f.write(line + "\n")
 
+    def _reg_snapshot(self, regulators: dict):
+        r = regulators.get(1) if regulators else None
+        if not r:
+            return ""
+
+        mode = "FLOAT" if r.charge_state == 1 else "BOOST" if r.charge_state == 2 else "OFF"
+        return (
+            f"R1 MODE={mode} "
+            f"U={r.batt:.2f}V "
+            f"P={r.power:.0f}W "
+            f"E_DAY={r.energy_today:.0f}W "
+            f"3111={r.r3111:.2f}"
+        )
+
     def update(self, regulators: dict):
 
         """
@@ -34,34 +47,27 @@ class RegulatorLogger:
         now = time.time()
 
         for idx, r in regulators.items():
+            if idx != 1:
+                continue
 
             # logujeme jen při nabíjení
             if r.charge_state not in (1, 2):
                 continue
 
             # hlídání intervalu
-            if now - self.last_log_ts[idx] < LOG_INTERVAL:
+            last_ts = self.last_log_ts.get(idx, 0)
+            if now - last_ts < LOG_INTERVAL:
                 continue
 
             self.last_log_ts[idx] = now
 
             ts = time.strftime("%H:%M")
-            mode = "FLOAT" if r.charge_state == 1 else "BOOST"
-
-            line = (
-                f"{ts} R{idx} MODE={mode} "
-                f"U={r.batt:.2f}V "
-                f"P={r.power:.0f}W "
-                f"E={r.energy/1000:.2f}kWh "
-                f"310E={r.r310e:.2f} "
-                f"3304={r.r3304:.0f} "
-                f"3111={r.r3111:.2f}"
-            )
+            line = f"{ts} {self._reg_snapshot(regulators)}"
 
             self._write(line)
 
 
-    def update_load(self, load: int):
+    def update_load(self, load: int, regulators: dict = None):
         if self.last_load_state is None:
             self.last_load_state = load
             return
@@ -73,4 +79,6 @@ class RegulatorLogger:
 
         ts = time.strftime("%H:%M:%S")
         text = "ZAPNUTO" if load == 1 else "VYPNUTO"
-        self._write(f"{ts} VYTĚŽOVÁNÍ: {text}")
+        snapshot = self._reg_snapshot(regulators)
+        suffix = f" {snapshot}" if snapshot else ""
+        self._write(f"{ts} VYTĚŽOVÁNÍ: {text}{suffix}")

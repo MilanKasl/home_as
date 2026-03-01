@@ -25,19 +25,12 @@ class SystemState:
             1: {
                 "BATT": 0.0,
                 "PWR": 0,
-                "ENG": 0.0,
+                "ENG_DAY": 0.0,
+                "ENG_MONTH": 0.0,
+                "ENG_YEAR": 0.0,
                 "CH": 0,
-                "R310E": 0.0,
-                "R3304": 0.0,
-                "R3111": 0.0,
-            },
-            2: {
-                "BATT": 0.0,
-                "PWR": 0,
-                "ENG": 0.0,
-                "CH": 0,
-                "R310E": 0.0,
-                "R3304": 0.0,
+                "VBAT_MAX_DAY": 0.0,
+                "VBAT_MIN_DAY": 0.0,
                 "R3111": 0.0,
             },
         }
@@ -50,4 +43,3 @@ class SystemState:
             | (self.stat["F3"] << 2)
             | (self.stat["F4"] << 3)
         )
-

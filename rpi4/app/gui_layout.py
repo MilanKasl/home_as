@@ -214,8 +214,7 @@ class DashboardLayout:
         )
         title.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 15))
 
-        self.create_regulator_block(self.right_panel, 1, 0, "REGULÁTOR 1")
-        self.create_regulator_block(self.right_panel, 1, 1, "REGULÁTOR 2")
+        self.create_regulator_block(self.right_panel, 1, 0, 1, "REGULÁTOR 1")
 
         # ===== TEPLOTY (SPOLEČNÉ) =====
         temp_title = tk.Label(
@@ -234,7 +233,7 @@ class DashboardLayout:
 
 
 
-    def create_regulator_block(self, parent, row, column, name):
+    def create_regulator_block(self, parent, row, column, rid, name):
         block = tk.Frame(parent, bg="#111111", bd=1, relief="solid")
         block.grid(row=row, column=column, sticky="nsew", padx=10, pady=(0, 10))
 
@@ -249,15 +248,15 @@ class DashboardLayout:
         )
         title.grid(row=0, column=0, sticky="w", padx=10, pady=(4, 4))
 
-        rid = 1 if "1" in name else 2
-
         self.create_value_row(block, 1, "Napětí baterie:", f"r{rid}_batt")
         self.create_value_row(block, 2, "Výkon panelů:", f"r{rid}_power")
-        self.create_value_row(block, 3, "Vyrobeno dnes:", f"r{rid}_energy")
-        self.create_value_row(block, 4, "Spotřeba dnes:", f"r{rid}_3304")
-        self.create_value_row(block, 5, "Odběr aktuální:", f"r{rid}_310e")
-        self.create_value_row(block, 6, "Teplota reg.:", f"r{rid}_3111")
-        self.create_value_row(block, 7, "Stav nabíjení:", f"r{rid}_state")
+        self.create_value_row(block, 3, "Vyrobeno dnes:", f"r{rid}_energy_day")
+        self.create_value_row(block, 4, "Vyrobeno měsíc (kWh):", f"r{rid}_energy_month")
+        self.create_value_row(block, 5, "Vyrobeno rok (kWh):", f"r{rid}_energy_year")
+        self.create_value_row(block, 6, "Max napětí aku (dnes):", f"r{rid}_vmax")
+        self.create_value_row(block, 7, "Min napětí aku (dnes):", f"r{rid}_vmin")
+        self.create_value_row(block, 8, "Teplota reg.:", f"r{rid}_3111")
+        self.create_value_row(block, 9, "Stav nabíjení:", f"r{rid}_state")
 
 
 
@@ -419,7 +418,6 @@ class DashboardLayout:
         root.grid_rowconfigure(0, weight=0)
         root.grid_rowconfigure(1, weight=1)
         root.grid_columnconfigure(0, weight=1)
-        root.grid_columnconfigure(1, weight=1)
 
         tk.Label(
             root,
@@ -427,14 +425,14 @@ class DashboardLayout:
             fg=FG_MAIN,
             bg=BG_MAIN,
             font=FONT_TITLE
-        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=12, pady=12)
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=12)
 
         ROW_A = "#1e1e1e"
         ROW_B = "#242424"
 
         SEP_COLOR = "#2F3645"
 
-        for rid in (1, 2):
+        for rid in (1,):
             panel = tk.Frame(root, bg=BG_PANEL)
             panel.grid(row=1, column=rid - 1, sticky="nsew", padx=10, pady=10)
 
@@ -494,9 +492,11 @@ class DashboardLayout:
             # =====================
             # 📊 DENNÍ BILANCE
             # =====================
-            row("📈 Vyrobeno dnes", f"fve{rid}_energy")
-            row("📉 Spotřeba dnes", f"fve{rid}_3304")
-            row("⚙️ Odběr aktuální", f"fve{rid}_310e")
+            row("📈 Vyrobeno dnes", f"fve{rid}_energy_day")
+            row("📈 Vyrobeno měsíc (kWh)", f"fve{rid}_energy_month")
+            row("📈 Vyrobeno rok (kWh)", f"fve{rid}_energy_year")
+            row("🔋 Max napětí aku (dnes)", f"fve{rid}_vmax")
+            row("🔋 Min napětí aku (dnes)", f"fve{rid}_vmin")
 
             tk.Frame(panel, height=1, bg=SEP_COLOR).pack(fill="x", padx=8, pady=12)
 
@@ -506,30 +506,13 @@ class DashboardLayout:
             row("🌡 Teplota regulátoru", f"fve{rid}_3111")
             row("⚡ Stav nabíjení", f"fve{rid}_state", is_state=True)
 
-        # =================================================
-        # 🔌 VYTĚŽOVÁNÍ – GLOBÁLNÍ STAV
-        # =================================================
-        load_panel = tk.Frame(root, bg=BG_PANEL)
-        load_panel.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
-
-        tk.Frame(load_panel, height=1, bg=SEP_COLOR).pack(fill="x", padx=8, pady=(6, 10))
-
-        self.values["fve_load"] = tk.Label(
-            load_panel,
-            text="⇧ Vytěžování: ---",
-            fg=FG_MUTED,
-            bg=BG_PANEL,
-            font=("DejaVu Sans", 16, "bold")
-        )
-        self.values["fve_load"].pack(pady=(4, 6))
-
         # === ZPĚT ===
         tk.Button(
             root,
             text="ZPĚT",
             font=FONT_VALUE,
             command=lambda: self.show_view("main")
-        ).grid(row=3, column=0, columnspan=2, pady=10)
+        ).grid(row=2, column=0, pady=10)
 
 
     def _fve_value(self, parent, label, key):
@@ -601,32 +584,51 @@ class DashboardLayout:
             font=FONT_LABEL
         ).pack(anchor="w", padx=16, pady=(14, 4))
 
-        self.values["cov_status"] = tk.Label(
+        tk.Label(
             content,
-            text="OK",
-            fg=GREEN_OK,
+            text="Aktivní prvky",
+            fg=FG_LABEL,
             bg=BG_TILE,
-            font=("DejaVu Sans", 28, "bold")
+            font=FONT_LABEL
+        ).pack(anchor="w", padx=16, pady=(2, 4))
+
+        active_box = tk.Frame(
+            content,
+            bg=ROW_A,
+            highlightthickness=1,
+            highlightbackground="#333333"
         )
-        self.values["cov_status"].pack(anchor="w", padx=16, pady=(0, 10))
+        active_box.pack(fill="x", padx=16, pady=(0, 10))
+
+        self.values["main_cov_active"] = tk.Label(
+            active_box,
+            text="• ---",
+            fg=FG_MAIN,
+            bg=ROW_A,
+            font=("DejaVu Sans", 15, "bold")
+        )
+        self.values["main_cov_active"].pack(anchor="w", padx=12, pady=(10, 6))
+        self.values["main_cov_active"].config(justify="left", anchor="w")
+
+        tk.Frame(active_box, height=1, bg="#333333").pack(fill="x", padx=10, pady=(2, 6))
 
         self.values["main_temp_water"] = tk.Label(
-            content,
+            active_box,
             text="💧 Voda: --.- °C",
             fg=FG_MAIN,
-            bg=BG_TILE,
+            bg=ROW_A,
             font=FONT_VALUE
         )
-        self.values["main_temp_water"].pack(anchor="w", padx=16)
+        self.values["main_temp_water"].pack(anchor="w", padx=12, pady=(0, 2))
 
         self.values["main_temp_air"] = tk.Label(
-            content,
+            active_box,
             text="🌡️ Vzduch: --.- °C",
             fg=FG_MAIN,
-            bg=BG_TILE,
+            bg=ROW_A,
             font=FONT_VALUE
         )
-        self.values["main_temp_air"].pack(anchor="w", padx=16)
+        self.values["main_temp_air"].pack(anchor="w", padx=12, pady=(0, 10))
 
         # spacer → tlačítko dolů
         tk.Frame(cov, bg=BG_TILE).pack(expand=True)
@@ -661,7 +663,7 @@ class DashboardLayout:
         content = tk.Frame(fve, bg=BG_TILE)
         content.pack(fill="both", expand=True)
 
-        for rid in (1, 2):
+        for rid in (1,):
             block = tk.Frame(
                 content,
                 bg=BG_TILE,
@@ -689,8 +691,22 @@ class DashboardLayout:
 
             self.zebra_row(
                 block,
+                "Výkon panelů",
+                f"main_r{rid}_power",
+                colors[1]
+            )
+
+            self.zebra_row(
+                block,
                 "Vyrobeno dnes",
-                f"main_r{rid}_energy",
+                f"main_r{rid}_energy_day",
+                colors[0]
+            )
+
+            self.zebra_row(
+                block,
+                "Teplota reg.",
+                f"main_r{rid}_temp",
                 colors[1]
             )
 
@@ -699,6 +715,13 @@ class DashboardLayout:
                 "Stav",
                 f"main_r{rid}_state",
                 colors[0]
+            )
+
+            self.zebra_row(
+                block,
+                "Vytěžování",
+                "main_fve_load",
+                colors[1]
             )
 
         # === TLAČÍTKO DOLE ===

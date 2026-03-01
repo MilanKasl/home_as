@@ -32,7 +32,7 @@ def parse_cov_frame(line: str):
 
 def parse_reg_frame(line: str):
     """
-    Očekává: R1:BATT,PWR,ENG,CH,310E,3304,3111
+    Očekává: R1:BATT,PWR,ENG_DAY,ENG_MONTH,ENG_YEAR,CH,3302,3303,3111
     """
     if not line.startswith("R"):
         return None
@@ -41,22 +41,24 @@ def parse_reg_frame(line: str):
         rid, data = line.split(":", 1)
         idx = int(rid[1])
 
-        if idx not in (1, 2):
+        if idx != 1:
             return None
 
         parts = data.split(",")
-        if len(parts) != 7:
+        if len(parts) != 9:
             return None
 
         return {
             "IDX": idx,
             "BATT": float(parts[0]),
             "PWR": float(parts[1]),
-            "ENG": float(parts[2]) * 1000,
-            "CH": int(parts[3]),
-            "R310E": float(parts[4]),
-            "R3304": float(parts[5]) * 1000,
-            "R3111": float(parts[6]),
+            "ENG_DAY": float(parts[2]),
+            "ENG_MONTH": float(parts[3]),
+            "ENG_YEAR": float(parts[4]),
+            "CH": int(parts[5]),
+            "VBAT_MAX_DAY": float(parts[6]),
+            "VBAT_MIN_DAY": float(parts[7]),
+            "R3111": float(parts[8]),
         }
 
     except (TypeError, ValueError, IndexError):

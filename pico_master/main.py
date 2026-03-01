@@ -121,19 +121,11 @@ while True:
             )
 
             r1 = state.reg[1]
-            r2 = state.reg[2]
 
             out.append(
-                "R1:{:.2f},{:.0f},{:.2f},{},{:.2f},{:.2f},{:.2f}".format(
-                    r1["BATT"], r1["PWR"], r1["ENG"], r1["CH"],
-                    r1["R310E"], r1["R3304"], r1["R3111"]
-                )
-            )
-
-            out.append(
-                "R2:{:.2f},{:.0f},{:.2f},{},{:.2f},{:.2f},{:.2f}".format(
-                    r2["BATT"], r2["PWR"], r2["ENG"], r2["CH"],
-                    r2["R310E"], r2["R3304"], r2["R3111"]
+                "R1:{:.2f},{:.0f},{:.0f},{:.0f},{:.0f},{},{:.2f},{:.2f},{:.2f}".format(
+                    r1["BATT"], r1["PWR"], r1["ENG_DAY"], r1["ENG_MONTH"], r1["ENG_YEAR"], r1["CH"],
+                    r1["VBAT_MAX_DAY"], r1["VBAT_MIN_DAY"], r1["R3111"]
                 )
             )
 
@@ -155,5 +147,3 @@ while True:
         if wdt:
             wdt.feed()
     time.sleep_ms(5)
-
-

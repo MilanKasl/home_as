@@ -8,7 +8,7 @@ class PowerLogic:
 
     def __init__(
         self,
-        batt_on=13.45,
+        batt_on=13.55,
         batt_off=13.30,
         batt_protect=13.20,
         power_max=1000,
