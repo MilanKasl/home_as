@@ -9,9 +9,16 @@ SEND_INTERVAL_MS = 5000
 # ======== Piny relé ========
 COV_RELAY_PIN = 15      # Mega → AC měnič (COV)
 FVE_RELAY_PIN = 16      # Pico → DC měnič (nadvýroba)
+AUX_RELAY_PIN = 17      # zpožděné  relé čerpadla od COV log.1
+AUX_RELAY_ACTIVE_HIGH = True
 
 # ======== PWM ========
 PWM_PIN = 14
+
+# ======== Povolení vytěžování ========
+FVE_ENABLE_BUTTON_PIN = 18
+FVE_ENABLE_BUTTON_PULLUP = True
+FVE_ENABLE_ACTIVE_LEVEL = 0
 
 # ======== Soumrakový vstup ========
 SUN_SENSOR_PIN = 13          # GPIO vstup z relé/čidla
@@ -27,9 +34,13 @@ UART0_TX = 0
 UART0_RX = 1
 
 # ======== Logika nadvýroby ========
-BATT_ON = 13.55
-BATT_OFF = 13.30
+BATT_ON = 13.50
+BATT_OFF = 13.40
 BATT_PROTECT = 13.20  # okamžitá ochrana baterie při vytěžování (V)
 LOAD_POWER = 200   # skutečný výkon zátěže (W)
 
 POWER_MAX = 1000
+
+# ======== Časované pomocné relé ========
+AUX_RELAY_DELAY_MS = 60000
+AUX_RELAY_PULSE_MS = 30000

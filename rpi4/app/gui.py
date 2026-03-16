@@ -1,13 +1,14 @@
 #gui.py
 import tkinter as tk
 import time
+from datetime import date
 from app.gui_style import *
 import threading
 from app.parser import parse_fve_load_frame
 
 from app.gui_layout import DashboardLayout
 
-from app.cov_logger import CovLogger
+from app.cov_logger import CovLogger, CovHistoryStore
 from app.reg_logger import RegulatorLogger
 from app.parser import parse_cov_frame, parse_reg_frame
 from app.ds18b20 import DS18B20
@@ -43,6 +44,9 @@ class DashboardGUI:
         # --- DATA KONTEJNERY ---
         self._last_values = {}
         self.indicators = {}
+        self.cov_history_data = None
+        self.last_cov_history_refresh = 0.0
+        self.COV_HISTORY_REFRESH_INTERVAL = 60
 
         # --- HARDWARE ---
         self.ds = DS18B20()
@@ -68,6 +72,7 @@ class DashboardGUI:
         # --- LOGGERS ---
         self.reg_logger = RegulatorLogger()
         self.cov_logger = CovLogger()
+        self.cov_history = CovHistoryStore()
 
         # --- IO ---
         self.io_running = True
@@ -117,6 +122,21 @@ class DashboardGUI:
             try:
                 if self.usb.ser is None:
                     self.usb.connect()
+                    time.sleep(1)
+                    continue
+
+                rx_silence = self.usb.seconds_since_rx()
+                conn_age = self.usb.seconds_since_connect()
+                if (
+                    rx_silence is not None
+                    and conn_age is not None
+                    and conn_age > self.USB_WATCHDOG_TIMEOUT
+                    and rx_silence > self.USB_WATCHDOG_TIMEOUT
+                ):
+                    print(
+                        f"[USB] RX timeout after {rx_silence:.1f}s, reconnecting {self.usb.device}"
+                    )
+                    self.usb.disconnect()
                     time.sleep(1)
                     continue
 
@@ -249,6 +269,9 @@ class DashboardGUI:
                 "main_temp_air",
                 f"Vzduch: {m.temp_air:.1f} °C"
             )
+
+        self.refresh_cov_history(force=self.cov_history_data is None)
+        self.render_main_cov_history(live_temp=m.temp_air)
 
 
         # === FVE – souhrn ===
@@ -422,6 +445,9 @@ class DashboardGUI:
         if m.temp_air is not None:
             self.set_value("cov_temp_air", f"{m.temp_air:.1f} °C")
 
+        self.refresh_cov_history(force=self.cov_history_data is None)
+        self.render_cov_history(live_temp=m.temp_air)
+
     def update_fve_view(self):
         for rid in (1,):
             r = self.state.regulators.get(rid)
@@ -493,6 +519,66 @@ class DashboardGUI:
 
     def charge_text(self, state):
         return "FLOAT" if state == 1 else "BOOST" if state == 2 else "OFF"
+
+    def refresh_cov_history(self, force=False):
+        now = time.time()
+        if (
+            not force
+            and self.cov_history_data is not None
+            and now - self.last_cov_history_refresh < self.COV_HISTORY_REFRESH_INTERVAL
+        ):
+            return
+
+        self.cov_history_data = self.cov_history.get_air_temperature_history(
+            today=date.today(),
+        )
+        self.last_cov_history_refresh = now
+
+    def render_cov_history(self, live_temp=None):
+        history = self.cov_history_data or {
+            "day": {"min": None, "max": None},
+            "month": {"min": None, "max": None},
+            "year": {"min": None, "max": None},
+            "months": {month: {"min": None, "max": None} for month in range(1, 13)},
+        }
+
+        for period in ("day", "month", "year"):
+            bucket = dict(history.get(period, {}))
+            if live_temp is not None:
+                self._merge_temp(bucket, live_temp)
+            self.set_value(f"cov_hist_{period}_min", self.format_temp(bucket.get("min")))
+            self.set_value(f"cov_hist_{period}_max", self.format_temp(bucket.get("max")))
+
+        months = history.get("months", {})
+        for month in range(1, 13):
+            bucket = dict(months.get(month, {}))
+            if live_temp is not None and month == date.today().month:
+                self._merge_temp(bucket, live_temp)
+            self.set_value(f"cov_hist_m{month:02d}_min", self.format_temp(bucket.get("min"), compact=True))
+            self.set_value(f"cov_hist_m{month:02d}_max", self.format_temp(bucket.get("max"), compact=True))
+
+    def render_main_cov_history(self, live_temp=None):
+        history = self.cov_history_data or {"day": {"min": None, "max": None}}
+        day_bucket = dict(history.get("day", {}))
+
+        if live_temp is not None:
+            self._merge_temp(day_bucket, live_temp)
+
+        self.set_value("main_cov_air_day_min", self.format_temp(day_bucket.get("min")))
+        self.set_value("main_cov_air_day_max", self.format_temp(day_bucket.get("max")))
+
+    def format_temp(self, value, compact=False):
+        if value is None:
+            return "--.-" if compact else "--.- °C"
+
+        formatted = f"{value:.1f}"
+        return formatted if compact else f"{formatted} °C"
+
+    def _merge_temp(self, bucket, temp):
+        if bucket.get("min") is None or temp < bucket["min"]:
+            bucket["min"] = temp
+        if bucket.get("max") is None or temp > bucket["max"]:
+            bucket["max"] = temp
 
     def start_fullscreen(self):
         self.root.update_idletasks()   # dopočítá layout

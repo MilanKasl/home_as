@@ -1,6 +1,7 @@
 import os
 import time
-from datetime import date
+import re
+from datetime import date, datetime
 
 
 class CovLogger:
@@ -49,3 +50,73 @@ class CovLogger:
 
         self.last_state = state
         self._write_line(m)
+
+
+class CovHistoryStore:
+    TA_PATTERN = re.compile(r"\bTA=(-?\d+(?:\.\d+)?)")
+
+    def __init__(self, base_dir="/home/milan/logs/home_as/cov"):
+        self.base_dir = base_dir
+
+    def get_air_temperature_history(self, today=None, live_temp=None):
+        today = today or date.today()
+
+        summary = {
+            "day": {"min": None, "max": None},
+            "month": {"min": None, "max": None},
+            "year": {"min": None, "max": None},
+            "months": {
+                month: {"min": None, "max": None}
+                for month in range(1, 13)
+            },
+        }
+
+        if os.path.isdir(self.base_dir):
+            for name in sorted(os.listdir(self.base_dir)):
+                if not name.endswith(".log"):
+                    continue
+
+                try:
+                    file_day = datetime.strptime(name[:-4], "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+
+                if file_day.year != today.year:
+                    continue
+
+                path = os.path.join(self.base_dir, name)
+                self._consume_file(path, summary, file_day, today)
+
+        if live_temp is not None:
+            self._update(summary["day"], live_temp)
+            self._update(summary["month"], live_temp)
+            self._update(summary["year"], live_temp)
+            self._update(summary["months"][today.month], live_temp)
+
+        return summary
+
+    def _consume_file(self, path, summary, file_day, today):
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    match = self.TA_PATTERN.search(line)
+                    if not match:
+                        continue
+
+                    temp = float(match.group(1))
+                    self._update(summary["year"], temp)
+                    self._update(summary["months"][file_day.month], temp)
+
+                    if file_day.month == today.month:
+                        self._update(summary["month"], temp)
+
+                    if file_day == today:
+                        self._update(summary["day"], temp)
+        except OSError:
+            return
+
+    def _update(self, bucket, temp):
+        if bucket["min"] is None or temp < bucket["min"]:
+            bucket["min"] = temp
+        if bucket["max"] is None or temp > bucket["max"]:
+            bucket["max"] = temp

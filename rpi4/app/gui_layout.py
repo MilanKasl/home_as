@@ -333,7 +333,7 @@ class DashboardLayout:
         self._cov_value(left, "Vzduch", "cov_temp_air")
 
         # =================================================
-        # PRAVÝ PANEL – REZERVA
+        # PRAVÝ PANEL – HISTORIE TEPLOT VZDUCHU
         # =================================================
         right = tk.Frame(
             root,
@@ -343,23 +343,87 @@ class DashboardLayout:
         )
         right.grid(row=1, column=1, sticky="nsew", padx=(6, 10), pady=10)
         right.grid_columnconfigure(0, weight=1)
-        right.grid_rowconfigure(0, weight=1)
+        right.grid_rowconfigure(1, weight=1)
 
         tk.Label(
             right,
-            text="HISTORIE / GRAFY",
+            text="HISTORIE TEPLOT VZDUCHU",
             fg=FG_LABEL,
             bg=BG_PANEL,
             font=FONT_LABEL
         ).pack(anchor="w", padx=12, pady=12)
 
-        tk.Label(
+        summary_wrap = tk.Frame(right, bg=BG_PANEL)
+        summary_wrap.pack(fill="x", padx=10, pady=(0, 10))
+
+        for idx, (title, prefix) in enumerate((
+            ("Dnes", "cov_hist_day"),
+            ("Měsíc", "cov_hist_month"),
+            ("Rok", "cov_hist_year"),
+        )):
+            card = tk.Frame(
+                summary_wrap,
+                bg=ROW_A if idx % 2 == 0 else ROW_B,
+                highlightthickness=1,
+                highlightbackground="#333333"
+            )
+            card.pack(side="left", expand=True, fill="both", padx=4)
+
+            tk.Label(
+                card,
+                text=title,
+                fg=FG_MAIN,
+                bg=card["bg"],
+                font=("DejaVu Sans", 12, "bold")
+            ).pack(anchor="w", padx=10, pady=(8, 4))
+
+            self._cov_history_metric(card, "Min", f"{prefix}_min", card["bg"])
+            self._cov_history_metric(card, "Max", f"{prefix}_max", card["bg"])
+
+        monthly = tk.Frame(
             right,
-            text="(rezervováno pro budoucí zobrazení)",
-            fg=FG_MUTED,
-            bg=BG_PANEL,
-            font=("DejaVu Sans", 12)
-        ).pack(expand=True)
+            bg=BG_TILE,
+            highlightthickness=1,
+            highlightbackground="#333333"
+        )
+        monthly.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        monthly.grid_columnconfigure(0, weight=1)
+        monthly.grid_columnconfigure(1, weight=1)
+
+        tk.Label(
+            monthly,
+            text="Měsíční extrémy vzduchu",
+            fg=FG_MAIN,
+            bg=BG_TILE,
+            font=("DejaVu Sans", 12, "bold")
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 6))
+
+        month_names = (
+            "Led", "Úno", "Bře", "Dub", "Kvě", "Čvn",
+            "Čvc", "Srp", "Zář", "Říj", "Lis", "Pro",
+        )
+
+        for idx, month_name in enumerate(month_names, start=1):
+            column = 0 if idx <= 6 else 1
+            row = idx if idx <= 6 else idx - 6
+            bg = ROW_A if row % 2 == 1 else ROW_B
+            row_frame = tk.Frame(monthly, bg=bg)
+            row_frame.grid(row=row, column=column, sticky="ew", padx=8, pady=2)
+
+            tk.Label(
+                row_frame,
+                text=month_name,
+                fg=FG_MAIN,
+                bg=bg,
+                font=("DejaVu Sans", 11, "bold"),
+                width=4,
+                anchor="w"
+            ).pack(side="left", padx=(10, 8), pady=6)
+
+            min_key = f"cov_hist_m{idx:02d}_min"
+            max_key = f"cov_hist_m{idx:02d}_max"
+            self._cov_history_inline(row_frame, "min", min_key, bg)
+            self._cov_history_inline(row_frame, "max", max_key, bg)
 
         # =================================================
         # ZPĚT
@@ -410,6 +474,87 @@ class DashboardLayout:
         val.pack(side="left", padx=(8, 0))
 
         self.values[key] = val
+
+    def _cov_history_metric(self, parent, label, key, bg):
+        row = tk.Frame(parent, bg=bg)
+        row.pack(fill="x", padx=10, pady=3)
+
+        tk.Label(
+            row,
+            text=f"{label}:",
+            fg=FG_LABEL,
+            bg=bg,
+            font=("DejaVu Sans", 11)
+        ).pack(side="left")
+
+        value = tk.Label(
+            row,
+            text="--.- °C",
+            fg=FG_MAIN,
+            bg=bg,
+            font=("DejaVu Sans", 12, "bold")
+        )
+        value.pack(side="right")
+        self.values[key] = value
+
+    def _cov_history_inline(self, parent, label, key, bg):
+        tk.Label(
+            parent,
+            text=f"{label}:",
+            fg=FG_LABEL,
+            bg=bg,
+            font=("DejaVu Sans", 10)
+        ).pack(side="left", padx=(0, 4))
+
+        value = tk.Label(
+            parent,
+            text="--.-",
+            fg=FG_MAIN,
+            bg=bg,
+            font=("DejaVu Sans", 10, "bold"),
+            width=5,
+            anchor="e"
+        )
+        value.pack(side="left", padx=(0, 10))
+        self.values[key] = value
+
+    def _main_cov_pair_row(self, parent, label, key, bg):
+        row = tk.Frame(parent, bg=bg)
+        row.pack(fill="x", padx=8, pady=2)
+
+        tk.Label(
+            row,
+            text=label,
+            fg=FG_LABEL,
+            bg=bg,
+            font=FONT_LABEL
+        ).pack(side="left", padx=12, pady=6)
+
+        value = tk.Label(
+            row,
+            text="--.- °C",
+            fg=FG_MAIN,
+            bg=bg,
+            font=FONT_VALUE
+        )
+        value.pack(side="right", padx=12)
+        self.values[key] = value
+
+    def _main_cov_content_row(self, parent, key, bg):
+        row = tk.Frame(parent, bg=bg)
+        row.pack(fill="x", padx=8, pady=2)
+
+        value = tk.Label(
+            row,
+            text="• ---",
+            fg=FG_MAIN,
+            bg=bg,
+            font=FONT_VALUE,
+            justify="left",
+            anchor="w"
+        )
+        value.pack(fill="x", padx=12, pady=6)
+        self.values[key] = value
 
         
     def build_fve_view(self):
@@ -594,41 +739,51 @@ class DashboardLayout:
 
         active_box = tk.Frame(
             content,
-            bg=ROW_A,
+            bg=BG_TILE,
             highlightthickness=1,
             highlightbackground="#333333"
         )
-        active_box.pack(fill="x", padx=16, pady=(0, 10))
+        active_box.pack(fill="x", padx=16, pady=(0, 8))
 
-        self.values["main_cov_active"] = tk.Label(
-            active_box,
-            text="• ---",
-            fg=FG_MAIN,
-            bg=ROW_A,
-            font=("DejaVu Sans", 15, "bold")
+        self._main_cov_content_row(active_box, "main_cov_active", ROW_A)
+
+        tk.Label(
+            content,
+            text="Aktuální teploty",
+            fg=FG_LABEL,
+            bg=BG_TILE,
+            font=FONT_LABEL
+        ).pack(anchor="w", padx=16, pady=(0, 3))
+
+        temp_box = tk.Frame(
+            content,
+            bg=BG_TILE,
+            highlightthickness=1,
+            highlightbackground="#333333"
         )
-        self.values["main_cov_active"].pack(anchor="w", padx=12, pady=(10, 6))
-        self.values["main_cov_active"].config(justify="left", anchor="w")
+        temp_box.pack(fill="x", padx=16, pady=(0, 8))
 
-        tk.Frame(active_box, height=1, bg="#333333").pack(fill="x", padx=10, pady=(2, 6))
+        self._main_cov_pair_row(temp_box, "Voda", "main_temp_water", ROW_A)
+        self._main_cov_pair_row(temp_box, "Vzduch", "main_temp_air", ROW_B)
 
-        self.values["main_temp_water"] = tk.Label(
-            active_box,
-            text="💧 Voda: --.- °C",
-            fg=FG_MAIN,
-            bg=ROW_A,
-            font=FONT_VALUE
+        tk.Label(
+            content,
+            text="Vzduch dnes",
+            fg=FG_LABEL,
+            bg=BG_TILE,
+            font=FONT_LABEL
+        ).pack(anchor="w", padx=16, pady=(0, 3))
+
+        history_box = tk.Frame(
+            content,
+            bg=BG_TILE,
+            highlightthickness=1,
+            highlightbackground="#333333"
         )
-        self.values["main_temp_water"].pack(anchor="w", padx=12, pady=(0, 2))
+        history_box.pack(fill="x", padx=16, pady=(0, 8))
 
-        self.values["main_temp_air"] = tk.Label(
-            active_box,
-            text="🌡️ Vzduch: --.- °C",
-            fg=FG_MAIN,
-            bg=ROW_A,
-            font=FONT_VALUE
-        )
-        self.values["main_temp_air"].pack(anchor="w", padx=12, pady=(0, 10))
+        self._main_cov_pair_row(history_box, "Minimum", "main_cov_air_day_min", ROW_A)
+        self._main_cov_pair_row(history_box, "Maximum", "main_cov_air_day_max", ROW_B)
 
         # spacer → tlačítko dolů
         tk.Frame(cov, bg=BG_TILE).pack(expand=True)

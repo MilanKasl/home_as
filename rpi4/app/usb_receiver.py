@@ -12,20 +12,32 @@ class PicoUSBReceiver:
         self.ser = None
 
         self._rx_buffer = ""
+        self.last_connect_ts = 0.0
+        self.last_rx_ts = 0.0
 
     # ------------------------------
     # Připojení k Pico
     # ------------------------------
     def connect(self):
         try:
+            if self.ser:
+                self.disconnect()
+
             self.ser = serial.Serial(
                 self.device,
                 self.baudrate,
                 timeout=self.timeout,
             )
+            self.ser.reset_input_buffer()
+            self.ser.reset_output_buffer()
+            self._rx_buffer = ""
+            now = time.time()
+            self.last_connect_ts = now
+            self.last_rx_ts = now
             print(f"[USB] Connected to {self.device}")
             return True
-        except serial.SerialException:
+        except serial.SerialException as e:
+            print(f"[USB] Connect failed: {e}")
             return False
 
     # ------------------------------
@@ -41,6 +53,7 @@ class PicoUSBReceiver:
                 return None
 
             data = self.ser.read(n).decode(errors="ignore")
+            self.last_rx_ts = time.time()
             self._rx_buffer += data
 
             lines = []
@@ -66,3 +79,14 @@ class PicoUSBReceiver:
             except Exception:
                 pass
             self.ser = None
+        self._rx_buffer = ""
+
+    def seconds_since_rx(self):
+        if self.last_rx_ts <= 0:
+            return None
+        return time.time() - self.last_rx_ts
+
+    def seconds_since_connect(self):
+        if self.last_connect_ts <= 0:
+            return None
+        return time.time() - self.last_connect_ts

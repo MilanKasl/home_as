@@ -8,8 +8,8 @@ class PowerLogic:
 
     def __init__(
         self,
-        batt_on=13.55,
-        batt_off=13.30,
+        batt_on=13.50,
+        batt_off=13.40,
         batt_protect=13.20,
         power_max=1000,
         load_power=200,     # výkon zátěže (W)
@@ -25,6 +25,10 @@ class PowerLogic:
         self.delay_on_ms = delay_on * 1000
         self.delay_off_ms = delay_off * 1000
 
+        self.state = self.IDLE
+        self.timer = None
+
+    def reset(self):
         self.state = self.IDLE
         self.timer = None
 
