@@ -1,6 +1,7 @@
 #gui.py
 import tkinter as tk
 import time
+import os
 from datetime import date
 from app.gui_style import *
 import threading
@@ -27,19 +28,23 @@ BATT_OFFSET = {
 
 
 class DashboardGUI:
-    def __init__(self, root: tk.Tk, state, usb):
+    def __init__(self, root: tk.Tk, state, link):
         # --- ZÁKLAD ---
         self.root = root
         self.state = state
-        self.usb = usb
+        self.link = link
         self.fullscreen = False
 
         # --- STAVY / TIMING ---
         self.last_data_ts = 0
         self.no_data = True
-        self.usb_dead_since = None
-        self.USB_WATCHDOG_TIMEOUT = 30
+        self.link_dead_since = None
+        self.LINK_WATCHDOG_TIMEOUT = 30
         self.last_temp_read = 0.0
+        self.last_invalid_log_ts = 0.0
+        self.last_no_data_diag_ts = 0.0
+        self.link_debug_log_path = "/home/milan/logs/home_as/link_debug.log"
+        self._ensure_link_debug_log_dir()
 
         # --- DATA KONTEJNERY ---
         self._last_values = {}
@@ -95,10 +100,11 @@ class DashboardGUI:
         now = time.time()
 
         # WATCHDOG
-        if now - self.last_data_ts > self.USB_WATCHDOG_TIMEOUT:
+        if now - self.last_data_ts > self.LINK_WATCHDOG_TIMEOUT:
             if not self.no_data:
-                print("USB WATCHDOG: no data")
+                self.log_link_debug("LINK WATCHDOG: no data")
             self.no_data = True
+            self.log_no_data_diagnostics()
         else:
             self.no_data = False
 
@@ -120,27 +126,27 @@ class DashboardGUI:
     def io_worker(self):
         while self.io_running:
             try:
-                if self.usb.ser is None:
-                    self.usb.connect()
+                if self.link.ser is None:
+                    self.link.connect()
                     time.sleep(1)
                     continue
 
-                rx_silence = self.usb.seconds_since_rx()
-                conn_age = self.usb.seconds_since_connect()
+                rx_silence = self.link.seconds_since_rx()
+                conn_age = self.link.seconds_since_connect()
                 if (
                     rx_silence is not None
                     and conn_age is not None
-                    and conn_age > self.USB_WATCHDOG_TIMEOUT
-                    and rx_silence > self.USB_WATCHDOG_TIMEOUT
+                    and conn_age > self.LINK_WATCHDOG_TIMEOUT
+                    and rx_silence > self.LINK_WATCHDOG_TIMEOUT
                 ):
-                    print(
-                        f"[USB] RX timeout after {rx_silence:.1f}s, reconnecting {self.usb.device}"
+                    self.log_link_debug(
+                        f"[LINK] RX timeout after {rx_silence:.1f}s, reconnecting {self.link.device}"
                     )
-                    self.usb.disconnect()
+                    self.link.disconnect()
                     time.sleep(1)
                     continue
 
-                block = self.usb.read_block()
+                block = self.link.read_block()
                 if block:
                     last_cov = None
                     last_reg = {}
@@ -161,6 +167,8 @@ class DashboardGUI:
                             self.state.update_from_cov(data)
                             self.last_data_ts = time.time()
                             self.cov_logger.update(self.state.monitoring)
+                        else:
+                            self.log_invalid_frame("COV", last_cov)
 
                     for line in last_reg.values():
                         data = parse_reg_frame(line)
@@ -168,6 +176,8 @@ class DashboardGUI:
                             self.state.update_from_reg(data)
                             self.reg_logger.update(self.state.regulators)
                             self.last_data_ts = time.time()
+                        else:
+                            self.log_invalid_frame("REG", line)
 
                     if last_load:
                         data = parse_fve_load_frame(last_load)
@@ -175,6 +185,8 @@ class DashboardGUI:
                             self.state.update_fve_load(data)
                             self.last_data_ts = time.time() 
                             self.reg_logger.update_load(self.state.fve_load, self.state.regulators)
+                        else:
+                            self.log_invalid_frame("FVE", last_load)
 
                 # DS18B20
                 now = time.time()
@@ -188,13 +200,61 @@ class DashboardGUI:
             except Exception as e:
                 print("IO ERROR:", e)
                 try:
-                    self.usb.disconnect()
+                    self.link.disconnect()
                 except:
                     pass
-                self.usb.ser = None
+                self.link.ser = None
 
             time.sleep(0.1)
 
+
+    def log_invalid_frame(self, frame_type, line):
+        now = time.time()
+        if now - self.last_invalid_log_ts < 5:
+            return
+
+        self.log_link_debug(f"[LINK] Invalid {frame_type} frame: {line[:200]}")
+        self.last_invalid_log_ts = now
+
+
+    def log_no_data_diagnostics(self):
+        now = time.time()
+        if now - self.last_no_data_diag_ts < 10:
+            return
+
+        snapshot = self.link.debug_snapshot()
+        rx_silence = snapshot["seconds_since_rx"]
+        conn_age = snapshot["seconds_since_connect"]
+        rx_silence_text = f"{rx_silence:.1f}s" if rx_silence is not None else "n/a"
+        conn_age_text = f"{conn_age:.1f}s" if conn_age is not None else "n/a"
+        last_chunk = (snapshot["last_rx_chunk"] or "").replace("\n", "\\n")
+        last_line = (snapshot["last_rx_line"] or "").replace("\n", "\\n")
+
+        self.log_link_debug(
+            "[LINK] NO DATA diagnostics: "
+            f"connected={snapshot['connected']} "
+            f"rx_silence={rx_silence_text} "
+            f"conn_age={conn_age_text} "
+            f"buffer_len={snapshot['buffer_len']} "
+            f"total_rx_bytes={snapshot['total_rx_bytes']} "
+            f"total_rx_lines={snapshot['total_rx_lines']} "
+            f"last_line='{last_line[:120]}' "
+            f"last_chunk='{last_chunk[:120]}'"
+        )
+        self.last_no_data_diag_ts = now
+
+    def _ensure_link_debug_log_dir(self):
+        os.makedirs(os.path.dirname(self.link_debug_log_path), exist_ok=True)
+
+    def log_link_debug(self, message):
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        line = f"{ts} {message}"
+        print(line)
+        try:
+            with open(self.link_debug_log_path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception as e:
+            print(f"[LINK] Failed to write debug log: {e}")
 
 
     def start_io(self):
@@ -626,13 +686,13 @@ class DashboardGUI:
         if age > 30:  # 30 s bez VALIDNÍCH dat
             if not self.no_data:
                 self.no_data = True
-                self.usb_dead_since = time.time()
-                print("USB watchdog: no data")
+                self.link_dead_since = time.time()
+                print("LINK watchdog: no data")
 
         else:
             if self.no_data:
                 self.no_data = False
-                self.usb_dead_since = None
+                self.link_dead_since = None
 
 
 

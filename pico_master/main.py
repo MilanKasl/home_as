@@ -1,24 +1,23 @@
-# main.py – Pico (USB CDC verze)
+# main.py – Pico Master
 
 from machine import UART, Pin
 import time
-import sys
 
 from state import SystemState
 from rs485 import read_uart
 from parser import parse_cov, parse_reg, parse_fve
 from machine import WDT
+from pio_uart_tx import PIOUARTTx
 
 # ================= Watchdog řízení =================
-DEV_MODE = True          # při ladění True, v provozu False
+DEV_MODE = False         # při ladění True, v provozu False
 WDT_START_DELAY = 60000  # 60 s po startu
 WDT_TIMEOUT = 8000       # max pro RP2350
+HOST_UART_BAUDRATE = 115200
+HOST_UART_TX_PIN = 8
 
 wdt = None
 start_time = time.ticks_ms()
-
-def log(*args):
-    print(*args)
 
 
 # ==============================
@@ -54,6 +53,12 @@ state = SystemState()
 buf_cov = ""
 buf_fve = ""
 last_send = time.ticks_ms()
+host_uart = PIOUARTTx(sm_id=0, pin_num=HOST_UART_TX_PIN, baudrate=HOST_UART_BAUDRATE)
+
+
+def write_host_lines(lines):
+    payload = "\n" + "\n".join(lines) + "\n\n"
+    host_uart.write(payload)
 
 
 
@@ -129,12 +134,9 @@ while True:
                 )
             )
 
-            try:
-                sys.stdout.write("\n" + "\n".join(out) + "\n\n")
-            except:
-                pass
+            write_host_lines(out)
 
-    except Exception as e:
+    except Exception:
         # poslední záchrana – NEZASTAVUJ firmware
         pass
 
