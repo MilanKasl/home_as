@@ -12,6 +12,7 @@ class SystemState:
             "F4": 0,
             "TW": 0.0,
             "TA": 0.0,
+            "TO": None,
             "EP1": 0,
             "EP2": 0,
         }

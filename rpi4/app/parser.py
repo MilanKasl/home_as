@@ -2,7 +2,7 @@
 
 def parse_cov_frame(line: str):
     """
-    Očekává: <P1,P2,AIR,FLOATMASK,TW,TA,EP1,EP2>
+    Očekává: <P1,P2,AIR,FLOATMASK,TW,TA,EP1,EP2,TO>
     Vrací dict nebo None
     """
     if not (line.startswith("<") and line.endswith(">")):
@@ -12,10 +12,10 @@ def parse_cov_frame(line: str):
         body = line[1:-1]
         parts = body.split(",")
 
-        if len(parts) != 8:
+        if len(parts) not in (8, 9):
             return None
 
-        return {
+        data = {
             "P1": int(parts[0]),
             "P2": int(parts[1]),
             "AIR": int(parts[2]),
@@ -25,6 +25,8 @@ def parse_cov_frame(line: str):
             "EP1": int(parts[6]),
             "EP2": int(parts[7]),
         }
+        data["TO"] = float(parts[8]) if len(parts) == 9 and parts[8] != "" else None
+        return data
 
     except (TypeError, ValueError, IndexError):
         return None

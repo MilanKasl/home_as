@@ -5,7 +5,7 @@ import time
 
 from state import SystemState
 from rs485 import read_uart
-from parser import parse_cov, parse_reg, parse_fve
+from parser import parse_cov, parse_reg, parse_fve, parse_outdoor
 from machine import WDT
 from pio_uart_tx import PIOUARTTx
 
@@ -61,6 +61,14 @@ def write_host_lines(lines):
     host_uart.write(payload)
 
 
+def effective_outdoor_temp(state):
+    ta = state.stat["TA"]
+    to = state.stat["TO"]
+    if to is None:
+        return ta
+    return to if to < ta else ta
+
+
 
 # ==============================
 # HLAVNÍ SMYČKA
@@ -75,7 +83,7 @@ while True:
         # ----- FVE -----
         frame, buf_fve = read_uart(uart_fve, buf_fve)
         if frame:
-            if not parse_fve(frame, state):
+            if not parse_fve(frame, state) and not parse_outdoor(frame, state):
                 parse_reg(frame, state)
 
         #------FVE přebytek------
@@ -107,17 +115,19 @@ while True:
         if time.ticks_diff(time.ticks_ms(), last_send) > 500:
             last_send = time.ticks_ms()
             out = []
+            outdoor_temp = effective_outdoor_temp(state)
 
             out.append(
-                "<{},{},{},{},{:.1f},{:.1f},{},{}>".format(
+                "<{},{},{},{},{:.1f},{:.1f},{},{},{}>".format(
                     state.stat["P1"],
                     state.stat["P2"],
                     state.stat["AIR"],
                     state.float_mask(),
                     state.stat["TW"],
-                    state.stat["TA"],
+                    outdoor_temp,
                     state.stat["EP1"],
                     state.stat["EP2"],
+                    "{:.1f}".format(state.stat["TO"]) if state.stat["TO"] is not None else "",
                 )
             )
             

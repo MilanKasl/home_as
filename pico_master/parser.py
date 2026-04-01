@@ -2,9 +2,9 @@
 
 def parse_cov(frame, state):
     # formát:
-    # <P1,P2,AIR,FLOATMASK,TW,TA,EP1,EP2>
+    # <P1,P2,AIR,FLOATMASK,TW,TA,EP1,EP2,TO>
     parts = frame.split(",")
-    if len(parts) != 8:
+    if len(parts) not in (8, 9):
         return
 
     s = state.stat
@@ -23,6 +23,7 @@ def parse_cov(frame, state):
     s["TA"] = float(parts[5])
     s["EP1"] = int(parts[6])
     s["EP2"] = int(parts[7])
+    s["TO"] = float(parts[8]) if len(parts) == 9 else None
 
 
 def parse_reg(frame, state):
@@ -65,6 +66,18 @@ def parse_fve(frame, state):
         val = int(frame.split(":")[1])
         state.fve["LOAD"] = val
     except:
+        pass
+
+    return True
+
+
+def parse_outdoor(frame, state):
+    if not frame.startswith("OUT:"):
+        return False
+
+    try:
+        state.stat["TO"] = float(frame.split(":", 1)[1])
+    except Exception:
         pass
 
     return True

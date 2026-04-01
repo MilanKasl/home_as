@@ -25,6 +25,12 @@ SUN_SENSOR_PIN = 13          # GPIO vstup z relé/čidla
 SUN_SENSOR_PULLUP = True     # True = interní pull-up (kontakt na GND)
 SUN_SENSOR_ACTIVE_LEVEL = 0  # 0 = aktivní v log.0, 1 = aktivní v log.1
 
+# ======== DS18B20 venkovní teplota ========
+OUTDOOR_TEMP_PIN = 19
+OUTDOOR_TEMP_SENSOR_ROM = None  # bytes hex bez oddělovačů, None = první nalezené čidlo
+OUTDOOR_TEMP_READ_INTERVAL_MS = 60000
+OUTDOOR_TEMP_SEND_INTERVAL_MS = 30000
+
 # ======== RS485 ========
 RS485_TX = 4
 RS485_RX = 5

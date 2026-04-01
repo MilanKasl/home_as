@@ -327,7 +327,7 @@ class DashboardGUI:
         if m.temp_air is not None:
             self.set_value(
                 "main_temp_air",
-                f"Vzduch: {m.temp_air:.1f} °C"
+                f"Venkovní: {m.temp_air:.1f} °C"
             )
 
         self.refresh_cov_history(force=self.cov_history_data is None)

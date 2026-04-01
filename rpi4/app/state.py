@@ -34,6 +34,9 @@ class MonitoringView:
     @property
     def temp_air(self): return self._c["TA"]
 
+    @property
+    def temp_outdoor(self): return self._c["TO"]
+
     # chyby (zatím jen placeholdery – můžeš rozšířit)
     @property
     def error_pump1(self): return self._c["EP1"]
@@ -87,6 +90,7 @@ class SystemState:
             "F4": 0,
             "TW": 0.0,
             "TA": 0.0,
+            "TO": None,
             "EP1": 0,
             "EP2": 0,
         }
@@ -140,6 +144,7 @@ class SystemState:
 
         self.cov["TW"] = data["TW"]
         self.cov["TA"] = data["TA"]
+        self.cov["TO"] = data.get("TO")
         self.cov["EP1"] = data["EP1"]
         self.cov["EP2"] = data["EP2"]
 

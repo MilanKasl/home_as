@@ -7,6 +7,7 @@ from pwm_control import PWMControl
 from power_logic import PowerLogic
 from modbus_ep import read_regulator
 from mega_protocol import poll_mega, send_frame
+from ds18b20_sensor import DS18B20Sensor
 
 #============vytěžování-stav=========
 FVE_REPEAT_INTERVAL = 30000  # 30 sekund
@@ -17,6 +18,9 @@ cov_log_request = 0
 cov_log_prev = 0
 aux_relay_trigger_at = None
 aux_relay_pulse_until = None
+outdoor_temp = None
+last_outdoor_temp_read = time.ticks_ms() - OUTDOOR_TEMP_READ_INTERVAL_MS
+last_outdoor_temp_send = time.ticks_ms() - OUTDOOR_TEMP_SEND_INTERVAL_MS
 
 # ================= Watchdog řízení =================
 wdt = None
@@ -31,6 +35,7 @@ sun_pull = Pin.PULL_UP if SUN_SENSOR_PULLUP else None
 sun_input = Pin(SUN_SENSOR_PIN, Pin.IN, sun_pull)
 fve_enable_pull = Pin.PULL_UP if FVE_ENABLE_BUTTON_PULLUP else None
 fve_enable_input = Pin(FVE_ENABLE_BUTTON_PIN, Pin.IN, fve_enable_pull)
+outdoor_sensor = DS18B20Sensor(OUTDOOR_TEMP_PIN, OUTDOOR_TEMP_SENSOR_ROM)
 
 # ================= Logika ===================
 logic = PowerLogic(
@@ -109,7 +114,21 @@ while True:
 
         # 1) Mega polling (non-blocking)
         poll_mega(on_log=handle_log)
-        update_aux_relay(time.ticks_ms())
+        now = time.ticks_ms()
+        update_aux_relay(now)
+
+        if time.ticks_diff(now, last_outdoor_temp_read) >= OUTDOOR_TEMP_READ_INTERVAL_MS:
+            last_outdoor_temp_read = now
+            measured_temp = outdoor_sensor.read_temp()
+            if measured_temp is not None:
+                outdoor_temp = measured_temp
+
+        if (
+            outdoor_temp is not None
+            and time.ticks_diff(now, last_outdoor_temp_send) >= OUTDOOR_TEMP_SEND_INTERVAL_MS
+        ):
+            last_outdoor_temp_send = now
+            send_frame(f"<OUT:{outdoor_temp:.2f}>")
 
         # 2) Periodické čtení regulátoru 1
         if time.ticks_diff(time.ticks_ms(), last_send) >= SEND_INTERVAL_MS:

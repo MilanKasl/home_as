@@ -141,7 +141,7 @@ class DashboardLayout:
         row += 1
         self.create_temp_row(self.left_panel, row, "Voda:", "temp_water")
         row += 1
-        self.create_temp_row(self.left_panel, row, "Vzduch:", "temp_air")
+        self.create_temp_row(self.left_panel, row, "Venkovní:", "temp_air")
 
     def create_section_label(self, parent, text, row):
         label = tk.Label(
@@ -330,7 +330,7 @@ class DashboardLayout:
 
         # ---- TEPLOTY (TEĎ SE VEJDOU) ----
         self._cov_value(left, "Voda", "cov_temp_water")
-        self._cov_value(left, "Vzduch", "cov_temp_air")
+        self._cov_value(left, "Venkovní", "cov_temp_air")
 
         # =================================================
         # PRAVÝ PANEL – HISTORIE TEPLOT VZDUCHU
@@ -347,7 +347,7 @@ class DashboardLayout:
 
         tk.Label(
             right,
-            text="HISTORIE TEPLOT VZDUCHU",
+            text="HISTORIE VENKOVNÍ TEPLOTY",
             fg=FG_LABEL,
             bg=BG_PANEL,
             font=FONT_LABEL
@@ -392,7 +392,7 @@ class DashboardLayout:
 
         tk.Label(
             monthly,
-            text="Měsíční extrémy vzduchu",
+            text="Měsíční extrémy venkovní teploty",
             fg=FG_MAIN,
             bg=BG_TILE,
             font=("DejaVu Sans", 12, "bold")
@@ -764,11 +764,11 @@ class DashboardLayout:
         temp_box.pack(fill="x", padx=16, pady=(0, 8))
 
         self._main_cov_pair_row(temp_box, "Voda", "main_temp_water", ROW_A)
-        self._main_cov_pair_row(temp_box, "Vzduch", "main_temp_air", ROW_B)
+        self._main_cov_pair_row(temp_box, "Venkovní", "main_temp_air", ROW_B)
 
         tk.Label(
             content,
-            text="Vzduch dnes",
+            text="Venkovní dnes",
             fg=FG_LABEL,
             bg=BG_TILE,
             font=FONT_LABEL
