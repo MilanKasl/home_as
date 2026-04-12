@@ -3,8 +3,9 @@ import time
 
 from config import *
 from relay_control import RelayControl
-from pwm_control import PWMControl
 from power_logic import PowerLogic
+from ssr_burst_control import SSRBurstControl
+from boiler_dump_logic import BoilerDumpLogic
 from modbus_ep import read_regulator
 from mega_protocol import poll_mega, send_frame
 from ds18b20_sensor import DS18B20Sensor
@@ -19,8 +20,12 @@ cov_log_prev = 0
 aux_relay_trigger_at = None
 aux_relay_pulse_until = None
 outdoor_temp = None
+boiler_temp = None
+boiler_temp_ready = False
+boiler_duty_current = 0.0
 last_outdoor_temp_read = time.ticks_ms() - OUTDOOR_TEMP_READ_INTERVAL_MS
 last_outdoor_temp_send = time.ticks_ms() - OUTDOOR_TEMP_SEND_INTERVAL_MS
+last_boiler_temp_read = time.ticks_ms() - BOILER_TEMP_READ_INTERVAL_MS
 
 # ================= Watchdog řízení =================
 wdt = None
@@ -30,27 +35,58 @@ start_time = time.ticks_ms()
 cov_relay = RelayControl(Pin(COV_RELAY_PIN))
 fve_relay = RelayControl(Pin(FVE_RELAY_PIN))
 aux_relay = RelayControl(Pin(AUX_RELAY_PIN), active_high=AUX_RELAY_ACTIVE_HIGH)
-pwm = PWMControl(Pin(PWM_PIN))   # test: žárovka / MOSFET
+ssr = SSRBurstControl(
+    Pin(SSR_PIN),
+    period_ms=SSR_BURST_PERIOD_MS,
+    active_high=SSR_ACTIVE_HIGH,
+)
 sun_pull = Pin.PULL_UP if SUN_SENSOR_PULLUP else None
 sun_input = Pin(SUN_SENSOR_PIN, Pin.IN, sun_pull)
 fve_enable_pull = Pin.PULL_UP if FVE_ENABLE_BUTTON_PULLUP else None
 fve_enable_input = Pin(FVE_ENABLE_BUTTON_PIN, Pin.IN, fve_enable_pull)
+boiler_enable_pull = Pin.PULL_UP if BOILER_ENABLE_BUTTON_PULLUP else None
+boiler_enable_input = Pin(BOILER_ENABLE_BUTTON_PIN, Pin.IN, boiler_enable_pull)
 outdoor_sensor = DS18B20Sensor(OUTDOOR_TEMP_PIN, OUTDOOR_TEMP_SENSOR_ROM)
+boiler_sensor = DS18B20Sensor(BOILER_TEMP_PIN, BOILER_TEMP_SENSOR_ROM)
 
 # ================= Logika ===================
-logic = PowerLogic(
+cov_logic = PowerLogic(
     batt_on=BATT_ON,
     batt_off=BATT_OFF,
     batt_protect=BATT_PROTECT,
     load_power=LOAD_POWER,   # nový parametr
     power_max=POWER_MAX,
 )
+boiler_gate_logic = PowerLogic(
+    batt_on=BATT_ON,
+    batt_off=BATT_OFF,
+    batt_protect=BATT_PROTECT,
+    load_power=LOAD_POWER,
+    power_max=POWER_MAX,
+)
+boiler_logic = BoilerDumpLogic(
+    heater_power_w=BOILER_HEATER_POWER_W,
+    power_reserve_w=BOILER_POWER_RESERVE_W,
+    v_min=BOILER_V_MIN,
+    v_limit=BOILER_V_LIMIT,
+    v_critical=BOILER_V_CRITICAL,
+    duty_step_up=BOILER_DUTY_STEP_UP,
+    duty_step_down=BOILER_DUTY_STEP_DOWN,
+    duty_step_fast_down=BOILER_DUTY_STEP_FAST_DOWN,
+    step_up_interval_ms=BOILER_STEP_UP_INTERVAL_MS,
+    step_down_interval_ms=BOILER_STEP_DOWN_INTERVAL_MS,
+    good_cycles_to_step_up=BOILER_GOOD_CYCLES_TO_STEP_UP,
+    bad_cycles_to_step_down=BOILER_BAD_CYCLES_TO_STEP_DOWN,
+    battery_avg_alpha=BOILER_BATTERY_AVG_ALPHA,
+    battery_trend_epsilon=BOILER_BATTERY_TREND_EPSILON,
+)
 
 # ================= Bezpečný start ===========
 cov_relay.off()
 fve_relay.off()
 aux_relay.off()
-pwm.off()
+ssr.set_duty(0.0)
+ssr.off()
 
 # ================= Mega callback ============
 def apply_cov_output():
@@ -75,6 +111,24 @@ def is_sun_ok():
 
 def is_fve_enabled():
     return 1 if fve_enable_input.value() == FVE_ENABLE_ACTIVE_LEVEL else 0
+
+
+def is_boiler_enabled():
+    return 1 if boiler_enable_input.value() == BOILER_ENABLE_ACTIVE_LEVEL else 0
+
+
+def update_boiler_temp_ready():
+    global boiler_temp_ready
+
+    if boiler_temp is None:
+        boiler_temp_ready = False
+        return
+
+    if boiler_temp_ready:
+        if boiler_temp >= BOILER_TEMP_TARGET_C:
+            boiler_temp_ready = False
+    elif boiler_temp <= (BOILER_TEMP_TARGET_C - BOILER_TEMP_HYSTERESIS_C):
+        boiler_temp_ready = True
 
 
 def update_aux_relay(now):
@@ -116,12 +170,20 @@ while True:
         poll_mega(on_log=handle_log)
         now = time.ticks_ms()
         update_aux_relay(now)
+        ssr.update(now)
 
         if time.ticks_diff(now, last_outdoor_temp_read) >= OUTDOOR_TEMP_READ_INTERVAL_MS:
             last_outdoor_temp_read = now
             measured_temp = outdoor_sensor.read_temp()
             if measured_temp is not None:
                 outdoor_temp = measured_temp
+
+        if time.ticks_diff(now, last_boiler_temp_read) >= BOILER_TEMP_READ_INTERVAL_MS:
+            last_boiler_temp_read = now
+            measured_boiler_temp = boiler_sensor.read_temp()
+            if measured_boiler_temp is not None:
+                boiler_temp = measured_boiler_temp
+                update_boiler_temp_ready()
 
         if (
             outdoor_temp is not None
@@ -153,24 +215,50 @@ while True:
 
             # Při ztrátě linky držet bezpečný stav a nezastavit smyčku.
             if batt_v is None or pv_power is None:
-                pwm.off()
+                ssr.set_duty(0.0)
                 fve_relay.off()
-                logic.reset()
-                fve_state = 0
-            elif not is_fve_enabled():
-                pwm.off()
-                fve_relay.off()
-                logic.reset()
+                cov_logic.reset()
+                boiler_gate_logic.reset()
+                boiler_logic.reset()
                 fve_state = 0
             else:
-                enabled = logic.update(batt_v, pv_power, sun_ok=is_sun_ok())
-                if enabled:
+                sun_ok = is_sun_ok()
+                cov_button = bool(is_fve_enabled())
+                boiler_button = bool(is_boiler_enabled())
+
+                cov_allowed = cov_button and cov_logic.update(batt_v, pv_power, sun_ok=sun_ok)
+                if not cov_button:
+                    cov_logic.reset()
+
+                if boiler_button:
+                    boiler_gate_enabled = boiler_gate_logic.update(batt_v, pv_power, sun_ok=sun_ok)
+                else:
+                    boiler_gate_enabled = False
+                    boiler_gate_logic.reset()
+
+                boiler_allowed = boiler_gate_enabled and boiler_temp_ready
+
+                # Pokud jsou povolené obě větve a boiler ještě nedosáhl cíle,
+                # boiler dostane prioritu a ČOV zůstane dočasně blokovaná.
+                boiler_priority = cov_allowed and boiler_allowed
+                cov_output_enabled = cov_allowed and not boiler_priority
+
+                if cov_output_enabled:
                     fve_relay.on()
-                    pwm.set(logic.pwm_value(pv_power))
+                else:
+                    fve_relay.off()
+
+                boiler_duty_current = boiler_logic.update(
+                    now_ms=now,
+                    enabled=boiler_allowed,
+                    batt_v=batt_v,
+                    pv_power=pv_power,
+                )
+                ssr.set_duty(boiler_duty_current)
+
+                if cov_output_enabled or boiler_duty_current > 0.0:
                     fve_state = 1
                 else:
-                    pwm.off()
-                    fve_relay.off()
                     fve_state = 0
 
             fve_state_current = fve_state

@@ -262,7 +262,8 @@ class DashboardLayout:
 
     def create_value_row(self, parent, row, label_text, key):
         frame = tk.Frame(parent, bg="#111111")
-        frame.grid(row=row, column=0, sticky="w", padx=10, pady=3)
+        frame.grid(row=row, column=0, sticky="ew", padx=10, pady=3)
+        frame.grid_columnconfigure(1, weight=1)
 
         label = tk.Label(
             frame,
@@ -270,8 +271,10 @@ class DashboardLayout:
             fg="#aaaaaa",
             bg="#111111",
             font=("DejaVu Sans", 12),
+            width=20,
+            anchor="w",
         )
-        label.pack(side="left")
+        label.grid(row=0, column=0, sticky="w")
 
         value = tk.Label(
             frame,
@@ -279,8 +282,9 @@ class DashboardLayout:
             fg="white",
             bg="#111111",
             font=("DejaVu Sans", 12, "bold"),
+            anchor="w",
         )
-        value.pack(side="left", padx=10)
+        value.grid(row=0, column=1, sticky="w", padx=(8, 0))
 
         self.values[key] = value
 
@@ -455,46 +459,54 @@ class DashboardLayout:
     def _cov_value(self, parent, label, key):
         row = tk.Frame(parent, bg=BG_PANEL)
         row.pack(fill="x", pady=4)
+        row.grid_columnconfigure(1, weight=1)
 
         tk.Label(
             row,
             text=f"{label}:",
             fg=FG_LABEL,
             bg=BG_PANEL,
-            font=FONT_LABEL
-        ).pack(side="left")
+            font=FONT_LABEL,
+            width=12,
+            anchor="w"
+        ).grid(row=0, column=0, sticky="w")
 
         val = tk.Label(
             row,
             text="--.- °C",
             fg=FG_MAIN,
             bg=BG_PANEL,
-            font=FONT_VALUE
+            font=FONT_VALUE,
+            anchor="w"
         )
-        val.pack(side="left", padx=(8, 0))
+        val.grid(row=0, column=1, sticky="w", padx=(8, 0))
 
         self.values[key] = val
 
     def _cov_history_metric(self, parent, label, key, bg):
         row = tk.Frame(parent, bg=bg)
         row.pack(fill="x", padx=10, pady=3)
+        row.grid_columnconfigure(1, weight=1)
 
         tk.Label(
             row,
             text=f"{label}:",
             fg=FG_LABEL,
             bg=bg,
-            font=("DejaVu Sans", 11)
-        ).pack(side="left")
+            font=("DejaVu Sans", 11),
+            width=6,
+            anchor="w"
+        ).grid(row=0, column=0, sticky="w")
 
         value = tk.Label(
             row,
             text="--.- °C",
             fg=FG_MAIN,
             bg=bg,
-            font=("DejaVu Sans", 12, "bold")
+            font=("DejaVu Sans", 12, "bold"),
+            anchor="w"
         )
-        value.pack(side="right")
+        value.grid(row=0, column=1, sticky="w", padx=(8, 0))
         self.values[key] = value
 
     def _cov_history_inline(self, parent, label, key, bg):
@@ -521,23 +533,49 @@ class DashboardLayout:
     def _main_cov_pair_row(self, parent, label, key, bg):
         row = tk.Frame(parent, bg=bg)
         row.pack(fill="x", padx=8, pady=2)
+        row.grid_columnconfigure(1, weight=1)
 
         tk.Label(
             row,
             text=label,
             fg=FG_LABEL,
             bg=bg,
-            font=FONT_LABEL
-        ).pack(side="left", padx=12, pady=6)
+            font=FONT_LABEL,
+            width=10,
+            anchor="w"
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=6)
 
         value = tk.Label(
             row,
             text="--.- °C",
             fg=FG_MAIN,
             bg=bg,
-            font=FONT_VALUE
+            font=FONT_VALUE,
+            anchor="w"
         )
-        value.pack(side="right", padx=12)
+        value.grid(row=0, column=1, sticky="w", padx=(8, 12))
+        self.values[key] = value
+
+    def _main_cov_primary_temp_row(self, parent, label, key, bg):
+        row = tk.Frame(parent, bg=bg)
+        row.pack(fill="both", expand=True, padx=8, pady=2)
+
+        tk.Label(
+            row,
+            text=label,
+            fg=FG_LABEL,
+            bg=bg,
+            font=("DejaVu Sans", 13)
+        ).pack(anchor="center", pady=(24, 6))
+
+        value = tk.Label(
+            row,
+            text="--.- °C",
+            fg=FG_MAIN,
+            bg=bg,
+            font=("DejaVu Sans", 28, "bold")
+        )
+        value.pack(anchor="center", pady=(0, 24))
         self.values[key] = value
 
     def _main_cov_content_row(self, parent, key, bg):
@@ -602,23 +640,27 @@ class DashboardLayout:
 
                 r = tk.Frame(panel, bg=bg)
                 r.pack(fill="x", padx=8, pady=2)
+                r.grid_columnconfigure(1, weight=1)
 
                 tk.Label(
                     r,
                     text=label,
                     fg=FG_LABEL,
                     bg=bg,
-                    font=("DejaVu Sans", 13)   # ⬅️ zvětšeno (bylo FONT_LABEL)
-                ).pack(side="left", padx=14)
+                    font=("DejaVu Sans", 13),
+                    width=22,
+                    anchor="w"
+                ).grid(row=0, column=0, sticky="w", padx=14)
 
                 val = tk.Label(
                     r,
                     text="---",
                     fg=FG_MAIN,
                     bg=bg,
-                    font=("DejaVu Sans", 14, "bold")  # ⬅️ hodnota taky lehce větší
+                    font=("DejaVu Sans", 14, "bold"),
+                    anchor="w"
                 )
-                val.pack(side="right", padx=14)
+                val.grid(row=0, column=1, sticky="w", padx=(8, 14))
 
                 self.values[key] = val
 
@@ -723,48 +765,21 @@ class DashboardLayout:
 
         tk.Label(
             content,
-            text="🛢️  ČOV",
+            text="Venkovní teplota",
             fg=FG_LABEL,
             bg=BG_TILE,
             font=FONT_LABEL
         ).pack(anchor="w", padx=16, pady=(14, 4))
 
-        tk.Label(
-            content,
-            text="Aktivní prvky",
-            fg=FG_LABEL,
-            bg=BG_TILE,
-            font=FONT_LABEL
-        ).pack(anchor="w", padx=16, pady=(2, 4))
-
-        active_box = tk.Frame(
+        outdoor_box = tk.Frame(
             content,
             bg=BG_TILE,
             highlightthickness=1,
             highlightbackground="#333333"
         )
-        active_box.pack(fill="x", padx=16, pady=(0, 8))
+        outdoor_box.pack(fill="both", expand=True, padx=16, pady=(0, 8))
 
-        self._main_cov_content_row(active_box, "main_cov_active", ROW_A)
-
-        tk.Label(
-            content,
-            text="Aktuální teploty",
-            fg=FG_LABEL,
-            bg=BG_TILE,
-            font=FONT_LABEL
-        ).pack(anchor="w", padx=16, pady=(0, 3))
-
-        temp_box = tk.Frame(
-            content,
-            bg=BG_TILE,
-            highlightthickness=1,
-            highlightbackground="#333333"
-        )
-        temp_box.pack(fill="x", padx=16, pady=(0, 8))
-
-        self._main_cov_pair_row(temp_box, "Voda", "main_temp_water", ROW_A)
-        self._main_cov_pair_row(temp_box, "Venkovní", "main_temp_air", ROW_B)
+        self._main_cov_primary_temp_row(outdoor_box, "Aktuálně", "main_temp_air", ROW_A)
 
         tk.Label(
             content,
@@ -934,20 +949,24 @@ class DashboardLayout:
     def zebra_row(self, parent, text, value_key, bg):
         row = tk.Frame(parent, bg=bg)
         row.pack(fill="x", pady=1)
+        row.grid_columnconfigure(1, weight=1)
 
         tk.Label(
             row,
             text=text,
             fg=FG_LABEL,
             bg=bg,
-            font=FONT_LABEL
-        ).pack(side="left", padx=6)
+            font=FONT_LABEL,
+            width=13,
+            anchor="w"
+        ).grid(row=0, column=0, sticky="w", padx=6)
 
         self.values[value_key] = tk.Label(
             row,
             text="---",
             fg=FG_MAIN,
             bg=bg,
-            font=FONT_VALUE
+            font=FONT_VALUE,
+            anchor="w"
         )
-        self.values[value_key].pack(side="right", padx=6)
+        self.values[value_key].grid(row=0, column=1, sticky="w", padx=(8, 6))

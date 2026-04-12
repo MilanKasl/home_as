@@ -281,57 +281,23 @@ class DashboardGUI:
         if hasattr(m, "temp_water") and m.temp_water is not None:
             self.set_value("temp_water", f"{m.temp_water:.1f} °C")
 
-        if hasattr(m, "temp_air") and m.temp_air is not None:
-            self.set_value("temp_air", f"{m.temp_air:.1f} °C")
+        if hasattr(m, "temp_outdoor") and m.temp_outdoor is not None:
+            self.set_value("temp_air", f"{m.temp_outdoor:.1f} °C")
 
     def update_main_view(self):
         m = self.state.monitoring
         tank = self.state.tank
 
         # === ČOV ===
-        active_items = []
-        has_tech = False
-        has_float = False
-        for key, label in [
-            ("pump1", "Pumpa 1"),
-            ("pump2", "Pumpa 2"),
-            ("air", "Vzduchování"),
-            ("float4", "Plovák 4"),
-            ("float3", "Plovák 3"),
-            ("float2", "Plovák 2"),
-            ("float1", "Plovák 1"),
-        ]:
-            if getattr(m, key):
-                active_items.append(label)
-                if key in ("pump1", "pump2", "air"):
-                    has_tech = True
-                else:
-                    has_float = True
-
-        if active_items:
-            active_text = "\n".join(f"• {item}" for item in active_items)
-        else:
-            active_text = "• Žádný"
-        self.set_value("main_cov_active", active_text)
-        cov_lbl = self.values.get("main_cov_active")
-        if cov_lbl:
-            color = "#ff9800" if has_float else GREEN_OK if has_tech else FG_MUTED
-            cov_lbl.config(fg=color)
-
-        if m.temp_water is not None:
-            self.set_value(
-                "main_temp_water",
-                f"Voda: {m.temp_water:.1f} °C"
-            )
-
-        if m.temp_air is not None:
+        if m.temp_outdoor is not None:
             self.set_value(
                 "main_temp_air",
-                f"Venkovní: {m.temp_air:.1f} °C"
+                f"{m.temp_outdoor:.1f} °C"
             )
+        self.set_main_temp_air_color(m.temp_outdoor)
 
         self.refresh_cov_history(force=self.cov_history_data is None)
-        self.render_main_cov_history(live_temp=m.temp_air)
+        self.render_main_cov_history(live_temp=m.temp_outdoor)
 
 
         # === FVE – souhrn ===
@@ -502,11 +468,11 @@ class DashboardGUI:
         if m.temp_water is not None:
             self.set_value("cov_temp_water", f"{m.temp_water:.1f} °C")
 
-        if m.temp_air is not None:
-            self.set_value("cov_temp_air", f"{m.temp_air:.1f} °C")
+        if m.temp_outdoor is not None:
+            self.set_value("cov_temp_air", f"{m.temp_outdoor:.1f} °C")
 
         self.refresh_cov_history(force=self.cov_history_data is None)
-        self.render_cov_history(live_temp=m.temp_air)
+        self.render_cov_history(live_temp=m.temp_outdoor)
 
     def update_fve_view(self):
         for rid in (1,):
@@ -639,6 +605,22 @@ class DashboardGUI:
             bucket["min"] = temp
         if bucket.get("max") is None or temp > bucket["max"]:
             bucket["max"] = temp
+
+    def set_main_temp_air_color(self, temp):
+        label = self.values.get("main_temp_air")
+        if not label:
+            return
+
+        if temp is None:
+            label.config(fg=FG_MAIN)
+        elif temp < 5:
+            label.config(fg="#6f9fcf")
+        elif temp < 12:
+            label.config(fg="#7fb8c9")
+        elif temp < 20:
+            label.config(fg="#d6b36f")
+        else:
+            label.config(fg="#cf8d5d")
 
     def start_fullscreen(self):
         self.root.update_idletasks()   # dopočítá layout

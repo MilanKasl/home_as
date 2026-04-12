@@ -2,9 +2,9 @@
 
 def parse_cov(frame, state):
     # formát:
-    # <P1,P2,AIR,FLOATMASK,TW,TA,EP1,EP2,TO>
+    # <P1,P2,AIR,FLOATMASK,TW,TA,EP1,EP2>
     parts = frame.split(",")
-    if len(parts) not in (8, 9):
+    if len(parts) != 8:
         return
 
     s = state.stat
@@ -23,7 +23,6 @@ def parse_cov(frame, state):
     s["TA"] = float(parts[5])
     s["EP1"] = int(parts[6])
     s["EP2"] = int(parts[7])
-    s["TO"] = float(parts[8]) if len(parts) == 9 else None
 
 
 def parse_reg(frame, state):

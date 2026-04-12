@@ -20,13 +20,16 @@ class CovLogger:
 
     def _write_line(self, m):
         ts = time.strftime("%H:%M:%S")
+        outdoor_temp = m.temp_outdoor
+        if outdoor_temp is None:
+            return
         line = (
             f"{ts} "
             f"P1={int(m.pump1)} P2={int(m.pump2)} AIR={int(m.air)} "
             f"F1={int(m.float1)} F2={int(m.float2)} "
             f"F3={int(m.float3)} F4={int(m.float4)} "
             f"EP1={int(m.error_pump1)} EP2={int(m.error_pump2)} "
-            f"TW={m.temp_water:.1f} TA={m.temp_air:.1f}"
+            f"TW={m.temp_water:.1f} TO={outdoor_temp:.1f}"
         )
         self._write(line)
 
@@ -53,6 +56,7 @@ class CovLogger:
 
 
 class CovHistoryStore:
+    TO_PATTERN = re.compile(r"\bTO=(-?\d+(?:\.\d+)?)")
     TA_PATTERN = re.compile(r"\bTA=(-?\d+(?:\.\d+)?)")
 
     def __init__(self, base_dir="/home/milan/logs/home_as/cov"):
@@ -99,7 +103,9 @@ class CovHistoryStore:
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 for line in handle:
-                    match = self.TA_PATTERN.search(line)
+                    match = self.TO_PATTERN.search(line)
+                    if not match:
+                        match = self.TA_PATTERN.search(line)
                     if not match:
                         continue
 
