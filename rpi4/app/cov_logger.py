@@ -26,6 +26,7 @@ class CovLogger:
         line = (
             f"{ts} "
             f"P1={int(m.pump1)} P2={int(m.pump2)} AIR={int(m.air)} "
+            f"MODE={int(m.mode)} "
             f"F1={int(m.float1)} F2={int(m.float2)} "
             f"F3={int(m.float3)} F4={int(m.float4)} "
             f"EP1={int(m.error_pump1)} EP2={int(m.error_pump2)} "
@@ -39,6 +40,7 @@ class CovLogger:
 
         state = (
             m.pump1, m.pump2, m.air,
+            m.mode,
             m.float1, m.float2, m.float3, m.float4,
             m.error_pump1, m.error_pump2,
         )

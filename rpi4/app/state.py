@@ -32,7 +32,7 @@ class MonitoringView:
     def temp_water(self): return self._c["TW"]
 
     @property
-    def temp_air(self): return self._c["TA"]
+    def mode(self): return self._c["MODE"]
 
     @property
     def temp_outdoor(self): return self._c["TO"]
@@ -89,7 +89,7 @@ class SystemState:
             "F3": 0,
             "F4": 0,
             "TW": 0.0,
-            "TA": 0.0,
+            "MODE": 0,
             "TO": None,
             "EP1": 0,
             "EP2": 0,
@@ -143,7 +143,7 @@ class SystemState:
         self.cov["F4"] = (mask >> 3) & 1
 
         self.cov["TW"] = data["TW"]
-        self.cov["TA"] = data["TA"]
+        self.cov["MODE"] = data["MODE"]
         self.cov["TO"] = data.get("TO")
         self.cov["EP1"] = data["EP1"]
         self.cov["EP2"] = data["EP2"]

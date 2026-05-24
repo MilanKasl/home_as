@@ -2,7 +2,7 @@
 
 def parse_cov(frame, state):
     # formát:
-    # <P1,P2,AIR,FLOATMASK,TW,TA,EP1,EP2>
+    # <P1,P2,AIR,FLOATMASK,TW,MODE,EP1,EP2>
     parts = frame.split(",")
     if len(parts) != 8:
         return
@@ -20,7 +20,7 @@ def parse_cov(frame, state):
     s["F4"] = (mask >> 3) & 1
 
     s["TW"] = float(parts[4])
-    s["TA"] = float(parts[5])
+    s["MODE"] = int(float(parts[5]))
     s["EP1"] = int(parts[6])
     s["EP2"] = int(parts[7])
 

@@ -23,6 +23,8 @@ class BoilerDumpLogic:
         bad_cycles_to_step_down=1,
         battery_avg_alpha=0.2,
         battery_trend_epsilon=0.01,
+        pv_power_tolerance_w=0,
+        step_up_grace_ms=0,
     ):
         self.heater_power_w = heater_power_w
         self.power_reserve_w = power_reserve_w
@@ -38,6 +40,8 @@ class BoilerDumpLogic:
         self.bad_cycles_to_step_down = bad_cycles_to_step_down
         self.battery_avg_alpha = battery_avg_alpha
         self.battery_trend_epsilon = battery_trend_epsilon
+        self.pv_power_tolerance_w = pv_power_tolerance_w
+        self.step_up_grace_ms = step_up_grace_ms
 
         self.state = self.STATE_BLOCKED
         self.duty_current = 0.0
@@ -47,6 +51,7 @@ class BoilerDumpLogic:
         self.bad_cycles = 0
         self.last_step_up_ms = None
         self.last_step_down_ms = None
+        self.step_up_grace_until_ms = None
 
     def reset(self):
         self.state = self.STATE_BLOCKED
@@ -55,6 +60,7 @@ class BoilerDumpLogic:
         self.bad_cycles = 0
         self.last_step_up_ms = None
         self.last_step_down_ms = None
+        self.step_up_grace_until_ms = None
 
     def update(self, now_ms, enabled, batt_v, pv_power):
         if self.battery_voltage_avg is None and batt_v is not None:
@@ -82,7 +88,13 @@ class BoilerDumpLogic:
             )
 
         dump_power = self.duty_current * self.heater_power_w
-        pv_support_ok = pv_power >= (dump_power + self.power_reserve_w)
+        pv_support_ok = (pv_power + self.pv_power_tolerance_w) >= (
+            dump_power + self.power_reserve_w
+        )
+        in_step_up_grace = (
+            self.step_up_grace_until_ms is not None
+            and time.ticks_diff(self.step_up_grace_until_ms, now_ms) > 0
+        )
 
         if self.battery_voltage_avg is not None and self.battery_voltage_avg < self.v_min:
             self.state = self.STATE_BACKOFF
@@ -92,7 +104,7 @@ class BoilerDumpLogic:
             self.duty_current = max(0.0, self.duty_current - self.duty_step_fast_down)
             return self.duty_current
 
-        if battery_falling or not pv_support_ok:
+        if battery_falling or (not pv_support_ok and not in_step_up_grace):
             self.state = self.STATE_BACKOFF
             self.good_cycles = 0
             self.bad_cycles += 1
@@ -118,6 +130,7 @@ class BoilerDumpLogic:
             self.state = self.STATE_PROBING
             self.good_cycles = 0
             self.last_step_up_ms = now_ms
+            self.step_up_grace_until_ms = time.ticks_add(now_ms, self.step_up_grace_ms)
             self.duty_current = min(1.0, self.duty_current + self.duty_step_up)
             return self.duty_current
 

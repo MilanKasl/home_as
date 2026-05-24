@@ -61,15 +61,6 @@ def write_host_lines(lines):
     host_uart.write(payload)
 
 
-def effective_outdoor_temp(state):
-    ta = state.stat["TA"]
-    to = state.stat["TO"]
-    if to is None:
-        return ta
-    return to if to < ta else ta
-
-
-
 # ==============================
 # HLAVNÍ SMYČKA
 # ==============================
@@ -115,16 +106,15 @@ while True:
         if time.ticks_diff(time.ticks_ms(), last_send) > 500:
             last_send = time.ticks_ms()
             out = []
-            outdoor_temp = effective_outdoor_temp(state)
 
             out.append(
-                "<{},{},{},{},{:.1f},{:.1f},{},{},{}>".format(
+                "<{},{},{},{},{:.1f},{},{},{},{}>".format(
                     state.stat["P1"],
                     state.stat["P2"],
                     state.stat["AIR"],
                     state.float_mask(),
                     state.stat["TW"],
-                    outdoor_temp,
+                    state.stat["MODE"],
                     state.stat["EP1"],
                     state.stat["EP2"],
                     "{:.1f}".format(state.stat["TO"]) if state.stat["TO"] is not None else "",

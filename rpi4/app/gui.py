@@ -468,8 +468,10 @@ class DashboardGUI:
         if m.temp_water is not None:
             self.set_value("cov_temp_water", f"{m.temp_water:.1f} °C")
 
-        if m.temp_outdoor is not None:
-            self.set_value("cov_temp_air", f"{m.temp_outdoor:.1f} °C")
+        self.set_value(
+            "cov_mode",
+            "Větší objem" if m.mode == 1 else "Menší objem"
+        )
 
         self.refresh_cov_history(force=self.cov_history_data is None)
         self.render_cov_history(live_temp=m.temp_outdoor)

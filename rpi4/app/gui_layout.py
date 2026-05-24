@@ -332,9 +332,9 @@ class DashboardLayout:
 
         tk.Frame(left, height=1, bg=SEP_COLOR).pack(fill="x", padx=10, pady=8)
 
-        # ---- TEPLOTY (TEĎ SE VEJDOU) ----
+        # ---- HODNOTY ČOV ----
         self._cov_value(left, "Voda", "cov_temp_water")
-        self._cov_value(left, "Venkovní", "cov_temp_air")
+        self._cov_value(left, "Režim", "cov_mode")
 
         # =================================================
         # PRAVÝ PANEL – HISTORIE TEPLOT VZDUCHU

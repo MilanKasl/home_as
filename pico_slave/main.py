@@ -79,6 +79,8 @@ boiler_logic = BoilerDumpLogic(
     bad_cycles_to_step_down=BOILER_BAD_CYCLES_TO_STEP_DOWN,
     battery_avg_alpha=BOILER_BATTERY_AVG_ALPHA,
     battery_trend_epsilon=BOILER_BATTERY_TREND_EPSILON,
+    pv_power_tolerance_w=BOILER_PV_POWER_TOLERANCE_W,
+    step_up_grace_ms=BOILER_STEP_UP_GRACE_MS,
 )
 
 # ================= Bezpečný start ===========
