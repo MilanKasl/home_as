@@ -9,7 +9,7 @@ from app.parser import parse_fve_load_frame
 
 from app.gui_layout import DashboardLayout
 
-from app.cov_logger import CovLogger, CovHistoryStore
+from app.cov_logger import CovLogger, CovHistoryStore, CovPumpCycleStore
 from app.reg_logger import RegulatorLogger
 from app.parser import parse_cov_frame, parse_reg_frame
 from app.ds18b20 import DS18B20
@@ -37,9 +37,11 @@ class DashboardGUI:
 
         # --- STAVY / TIMING ---
         self.last_data_ts = 0
+        self.last_cov_data_ts = time.time()
         self.no_data = True
         self.link_dead_since = None
         self.LINK_WATCHDOG_TIMEOUT = 30
+        self.COV_WATCHDOG_TIMEOUT = 2 * 60 * 60
         self.last_temp_read = 0.0
         self.last_invalid_log_ts = 0.0
         self.last_no_data_diag_ts = 0.0
@@ -50,8 +52,11 @@ class DashboardGUI:
         self._last_values = {}
         self.indicators = {}
         self.cov_history_data = None
+        self.cov_pump_cycles_data = []
         self.last_cov_history_refresh = 0.0
+        self.last_cov_pump_cycles_refresh = 0.0
         self.COV_HISTORY_REFRESH_INTERVAL = 60
+        self.COV_PUMP_CYCLES_REFRESH_INTERVAL = 60
 
         # --- HARDWARE ---
         self.ds = DS18B20()
@@ -78,6 +83,7 @@ class DashboardGUI:
         self.reg_logger = RegulatorLogger()
         self.cov_logger = CovLogger()
         self.cov_history = CovHistoryStore()
+        self.cov_pump_cycles = CovPumpCycleStore()
 
         # --- IO ---
         self.io_running = True
@@ -165,7 +171,9 @@ class DashboardGUI:
                         data = parse_cov_frame(last_cov)
                         if data:
                             self.state.update_from_cov(data)
-                            self.last_data_ts = time.time()
+                            now = time.time()
+                            self.last_data_ts = now
+                            self.last_cov_data_ts = now
                             self.cov_logger.update(self.state.monitoring)
                         else:
                             self.log_invalid_frame("COV", last_cov)
@@ -367,6 +375,7 @@ class DashboardGUI:
 
     def update_system_status(self):
         m = self.state.monitoring
+        cov_silence = time.time() - self.last_cov_data_ts
 
         # =================================================
         # 1️⃣ NO DATA – absolutní priorita
@@ -388,16 +397,42 @@ class DashboardGUI:
             return
 
         # =================================================
-        # 2️⃣ SBĚR CHYB ČOV
+        # 2️⃣ ČOV WATCHDOG – linka žije, ale ČOV neposílá validní rámce
+        # =================================================
+        if cov_silence > self.COV_WATCHDOG_TIMEOUT:
+            self.status_label.config(
+                text="STAV: COV NO DATA",
+                bg="#cc7700",
+                fg="black"
+            )
+
+            self.status_reason.config(
+                text=f"ČOV bez validních dat {self.format_duration(cov_silence)}",
+                fg="orange"
+            )
+
+            if "cov_status" in self.values:
+                self.values["cov_status"].config(text="COV NO DATA")
+
+            if "cov_reason" in self.values:
+                self.values["cov_reason"].config(
+                    text=f"Bez validních dat {self.format_duration(cov_silence)}",
+                    fg="orange"
+                )
+
+            return
+
+        # =================================================
+        # 3️⃣ SBĚR CHYB ČOV
         # =================================================
         reasons = []
 
         # --- ČERPADLA ---
         if m.error_pump1:
-            reasons.append("CHYBA ČERPADLA 1")
+            reasons.append("PORUCHA ČERPADLA 1/PLOVÁK 4")
 
         if m.error_pump2:
-            reasons.append("CHYBA ČERPADLA 2")
+            reasons.append("PORUCHA ČERPADLA 2/PLOVÁK 4")
 
         # --- PLOVÁKY (PORUCHOVÉ) ---
         if m.float1:
@@ -412,7 +447,7 @@ class DashboardGUI:
         # float4 = pracovní → NEPATŘÍ do ERROR
 
         # =================================================
-        # 3️⃣ VÝSLEDNÝ STAV
+        # 4️⃣ VÝSLEDNÝ STAV
         # =================================================
         if reasons:
             reason_text = " | ".join(reasons)
@@ -475,6 +510,8 @@ class DashboardGUI:
 
         self.refresh_cov_history(force=self.cov_history_data is None)
         self.render_cov_history(live_temp=m.temp_outdoor)
+        self.refresh_cov_pump_cycles(force=self.last_cov_pump_cycles_refresh == 0.0)
+        self.render_cov_pump_cycles()
 
     def update_fve_view(self):
         for rid in (1,):
@@ -562,6 +599,17 @@ class DashboardGUI:
         )
         self.last_cov_history_refresh = now
 
+    def refresh_cov_pump_cycles(self, force=False):
+        now = time.time()
+        if (
+            not force
+            and now - self.last_cov_pump_cycles_refresh < self.COV_PUMP_CYCLES_REFRESH_INTERVAL
+        ):
+            return
+
+        self.cov_pump_cycles_data = self.cov_pump_cycles.get_last_cycles(limit=10)
+        self.last_cov_pump_cycles_refresh = now
+
     def render_cov_history(self, live_temp=None):
         history = self.cov_history_data or {
             "day": {"min": None, "max": None},
@@ -577,13 +625,26 @@ class DashboardGUI:
             self.set_value(f"cov_hist_{period}_min", self.format_temp(bucket.get("min")))
             self.set_value(f"cov_hist_{period}_max", self.format_temp(bucket.get("max")))
 
-        months = history.get("months", {})
-        for month in range(1, 13):
-            bucket = dict(months.get(month, {}))
-            if live_temp is not None and month == date.today().month:
-                self._merge_temp(bucket, live_temp)
-            self.set_value(f"cov_hist_m{month:02d}_min", self.format_temp(bucket.get("min"), compact=True))
-            self.set_value(f"cov_hist_m{month:02d}_max", self.format_temp(bucket.get("max"), compact=True))
+    def render_cov_pump_cycles(self):
+        for row in range(10):
+            if row < len(self.cov_pump_cycles_data):
+                cycle = self.cov_pump_cycles_data[row]
+                p1_seconds = cycle.get("pump1_seconds")
+                p2_seconds = cycle.get("pump2_seconds")
+                ended_at = cycle.get("ended_at")
+
+                self.set_value(
+                    f"cov_cycle_{row}_time",
+                    ended_at.strftime("%d.%m. %H:%M") if ended_at else "--",
+                )
+                self.set_value(f"cov_cycle_{row}_p1", self.format_cycle_duration(p1_seconds))
+                self.set_value(f"cov_cycle_{row}_p2", self.format_cycle_duration(p2_seconds))
+                self.set_value(f"cov_cycle_{row}_diff", self.format_cycle_diff(p1_seconds, p2_seconds))
+            else:
+                self.set_value(f"cov_cycle_{row}_time", "--")
+                self.set_value(f"cov_cycle_{row}_p1", "--")
+                self.set_value(f"cov_cycle_{row}_p2", "--")
+                self.set_value(f"cov_cycle_{row}_diff", "--")
 
     def render_main_cov_history(self, live_temp=None):
         history = self.cov_history_data or {"day": {"min": None, "max": None}}
@@ -601,6 +662,32 @@ class DashboardGUI:
 
         formatted = f"{value:.1f}"
         return formatted if compact else f"{formatted} °C"
+
+    def format_duration(self, seconds):
+        total_minutes = max(0, int(seconds // 60))
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+
+        if hours:
+            return f"{hours} h {minutes} min"
+        return f"{minutes} min"
+
+    def format_cycle_duration(self, seconds):
+        if seconds is None:
+            return "--"
+
+        seconds = max(0, int(seconds))
+        minutes = seconds // 60
+        rest = seconds % 60
+        return f"{minutes}:{rest:02d}"
+
+    def format_cycle_diff(self, pump1_seconds, pump2_seconds):
+        if pump1_seconds is None or pump2_seconds is None:
+            return "--"
+
+        diff = int(pump1_seconds) - int(pump2_seconds)
+        sign = "+" if diff > 0 else "-" if diff < 0 else ""
+        return f"{sign}{self.format_cycle_duration(abs(diff))}"
 
     def _merge_temp(self, bucket, temp):
         if bucket.get("min") is None or temp < bucket["min"]:

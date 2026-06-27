@@ -128,3 +128,117 @@ class CovHistoryStore:
             bucket["min"] = temp
         if bucket["max"] is None or temp > bucket["max"]:
             bucket["max"] = temp
+
+
+class CovPumpCycleStore:
+    STATE_PATTERN = re.compile(r"\bP1=(\d+)\s+P2=(\d+)")
+
+    def __init__(self, base_dir="/home/milan/logs/home_as/cov"):
+        self.base_dir = base_dir
+
+    def get_last_cycles(self, limit=10, max_files=14):
+        if not os.path.isdir(self.base_dir):
+            return []
+
+        log_files = []
+        for name in sorted(os.listdir(self.base_dir), reverse=True):
+            if not name.endswith(".log"):
+                continue
+
+            try:
+                file_day = datetime.strptime(name[:-4], "%Y-%m-%d").date()
+            except ValueError:
+                continue
+
+            log_files.append((file_day, os.path.join(self.base_dir, name)))
+            if len(log_files) >= max_files:
+                break
+
+        cycles = []
+        active_cycle = None
+        pump_starts = {1: None, 2: None}
+        last_state = {1: 0, 2: 0}
+
+        for file_day, path in sorted(log_files):
+            active_cycle = self._consume_file(
+                path,
+                file_day,
+                cycles,
+                active_cycle,
+                pump_starts,
+                last_state,
+            )
+
+        return cycles[-limit:][::-1]
+
+    def _consume_file(self, path, file_day, cycles, active_cycle, pump_starts, last_state):
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    if len(line) < 8:
+                        continue
+
+                    match = self.STATE_PATTERN.search(line)
+                    if not match:
+                        continue
+
+                    try:
+                        timestamp = datetime.combine(
+                            file_day,
+                            datetime.strptime(line[:8], "%H:%M:%S").time(),
+                        )
+                    except ValueError:
+                        continue
+
+                    states = {
+                        1: int(match.group(1)),
+                        2: int(match.group(2)),
+                    }
+
+                    if active_cycle is None and (states[1] or states[2]):
+                        active_cycle = {
+                            "started_at": timestamp,
+                            "ended_at": None,
+                            "pump1_seconds": None,
+                            "pump2_seconds": None,
+                        }
+
+                    for pump_no in (1, 2):
+                        previous = last_state[pump_no]
+                        current = states[pump_no]
+
+                        if previous == 0 and current == 1:
+                            if active_cycle is None:
+                                active_cycle = {
+                                    "started_at": timestamp,
+                                    "ended_at": None,
+                                    "pump1_seconds": None,
+                                    "pump2_seconds": None,
+                                }
+                            pump_starts[pump_no] = timestamp
+
+                        elif previous == 1 and current == 0 and pump_starts[pump_no] is not None:
+                            elapsed = (timestamp - pump_starts[pump_no]).total_seconds()
+                            key = f"pump{pump_no}_seconds"
+                            if elapsed >= 0 and active_cycle is not None:
+                                active_cycle[key] = int(elapsed)
+                                active_cycle["ended_at"] = timestamp
+                            pump_starts[pump_no] = None
+
+                    if (
+                        active_cycle is not None
+                        and states[1] == 0
+                        and states[2] == 0
+                        and (
+                            active_cycle["pump1_seconds"] is not None
+                            or active_cycle["pump2_seconds"] is not None
+                        )
+                    ):
+                        cycles.append(active_cycle)
+                        active_cycle = None
+
+                    last_state.update(states)
+        except OSError:
+            return active_cycle
+
+        return active_cycle

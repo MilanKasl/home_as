@@ -80,5 +80,5 @@ BOILER_PV_POWER_TOLERANCE_W = 100
 BOILER_STEP_UP_GRACE_MS = 15000
 
 # ======== Časované pomocné relé ========
-AUX_RELAY_DELAY_MS = 60000
-AUX_RELAY_PULSE_MS = 30000
+AUX_RELAY_DELAY_MS = 60000 #zpoždění od zapnutí měniče
+AUX_RELAY_PULSE_MS = 60000 #interval pro dobu běhu čerpadla z vrtu

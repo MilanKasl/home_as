@@ -337,7 +337,7 @@ class DashboardLayout:
         self._cov_value(left, "Režim", "cov_mode")
 
         # =================================================
-        # PRAVÝ PANEL – HISTORIE TEPLOT VZDUCHU
+        # PRAVÝ PANEL – HISTORIE TEPLOT + CYKLY ČERPADEL
         # =================================================
         right = tk.Frame(
             root,
@@ -384,50 +384,50 @@ class DashboardLayout:
             self._cov_history_metric(card, "Min", f"{prefix}_min", card["bg"])
             self._cov_history_metric(card, "Max", f"{prefix}_max", card["bg"])
 
-        monthly = tk.Frame(
+        cycles = tk.Frame(
             right,
             bg=BG_TILE,
             highlightthickness=1,
             highlightbackground="#333333"
         )
-        monthly.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        monthly.grid_columnconfigure(0, weight=1)
-        monthly.grid_columnconfigure(1, weight=1)
+        cycles.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        cycles.grid_columnconfigure(0, weight=2)
+        cycles.grid_columnconfigure(1, weight=1)
+        cycles.grid_columnconfigure(2, weight=1)
+        cycles.grid_columnconfigure(3, weight=1)
 
         tk.Label(
-            monthly,
-            text="Měsíční extrémy venkovní teploty",
+            cycles,
+            text="Posledních 10 čerpacích cyklů",
             fg=FG_MAIN,
             bg=BG_TILE,
             font=("DejaVu Sans", 12, "bold")
-        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 6))
+        ).grid(row=0, column=0, columnspan=4, sticky="w", padx=10, pady=(8, 6))
 
-        month_names = (
-            "Led", "Úno", "Bře", "Dub", "Kvě", "Čvn",
-            "Čvc", "Srp", "Zář", "Říj", "Lis", "Pro",
-        )
-
-        for idx, month_name in enumerate(month_names, start=1):
-            column = 0 if idx <= 6 else 1
-            row = idx if idx <= 6 else idx - 6
-            bg = ROW_A if row % 2 == 1 else ROW_B
-            row_frame = tk.Frame(monthly, bg=bg)
-            row_frame.grid(row=row, column=column, sticky="ew", padx=8, pady=2)
-
+        headers = ("Čas", "Pumpa 1", "Pumpa 2", "Rozdíl")
+        for col, title in enumerate(headers):
             tk.Label(
-                row_frame,
-                text=month_name,
-                fg=FG_MAIN,
-                bg=bg,
-                font=("DejaVu Sans", 11, "bold"),
-                width=4,
-                anchor="w"
-            ).pack(side="left", padx=(10, 8), pady=6)
+                cycles,
+                text=title,
+                fg=FG_LABEL,
+                bg=BG_TILE,
+                font=("DejaVu Sans", 10, "bold"),
+                anchor="w" if col == 0 else "e"
+            ).grid(row=1, column=col, sticky="ew", padx=8, pady=(0, 4))
 
-            min_key = f"cov_hist_m{idx:02d}_min"
-            max_key = f"cov_hist_m{idx:02d}_max"
-            self._cov_history_inline(row_frame, "min", min_key, bg)
-            self._cov_history_inline(row_frame, "max", max_key, bg)
+        for row in range(10):
+            bg = ROW_A if row % 2 == 0 else ROW_B
+            for col, key_suffix in enumerate(("time", "p1", "p2", "diff")):
+                value = tk.Label(
+                    cycles,
+                    text="--",
+                    fg=FG_MAIN,
+                    bg=bg,
+                    font=("DejaVu Sans", 10, "bold"),
+                    anchor="w" if col == 0 else "e"
+                )
+                value.grid(row=row + 2, column=col, sticky="ew", padx=8, pady=3)
+                self.values[f"cov_cycle_{row}_{key_suffix}"] = value
 
         # =================================================
         # ZPĚT

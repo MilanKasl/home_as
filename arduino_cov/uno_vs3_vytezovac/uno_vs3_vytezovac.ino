@@ -5,10 +5,15 @@
 #include <SoftwareSerial.h>
 #include <EEPROM.h>
 #include <avr/wdt.h>    // umí watchdog reset (vložit mezi include kdykoliv)
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 bool restartDoneMorning = false;
 bool restartDoneEvening = false;
 byte lastResetDay = 0;     // 0 jako výchozí, po prvním čtení RTC se nastaví
+const bool AUTO_RESTART_ENABLED = false;
+byte lastResetFlags = 0;
 
 //==========vytěžovací relé========
 bool fve_load = false;
@@ -33,11 +38,14 @@ const int ONEWIRE_PIN = 3;
 
 // ==== Konstanty ====
 const unsigned long PUMP2_LOW_MODE_MS = 60000;    // doladit podle reálně odčerpaného objemu
-const unsigned long PUMP2_HIGH_MODE_MS = 240000;  // doladit podle reálně odčerpaného objemu
+const unsigned long PUMP2_HIGH_MODE_MS = 140000;  // 60s = cca 13L 
+const unsigned long FLOAT3_STOP_DELAY_MS = 2000;  // plovák 3 musí být sepnutý stabilně
 const int EEPROM_MODE_ADDR = 0;
 
-static bool cycleRunMorning = false;
-static bool cycleRunAfternoon = false;
+const byte PUMP_CYCLE_COUNT = 5;
+const byte PUMP_CYCLE_HOURS[PUMP_CYCLE_COUNT] = {2, 7, 12, 17, 22};
+const byte PUMP_CYCLE_MINUTES[PUMP_CYCLE_COUNT] = {3, 3, 3, 3, 3};
+static bool cycleRunToday[PUMP_CYCLE_COUNT] = {false, false, false, false, false};
 static byte lastDay = 0;
 bool air_on = false;
 bool ignorePumpErrors = false;
@@ -61,6 +69,9 @@ unsigned long lastJSONsend = 0;
 
 // ==== RTC ====
 RTC_DS3231 rtc;
+bool rtcAvailable = false;
+unsigned long lastRtcRetry = 0;
+const unsigned long RTC_RETRY_MS = 60000;
 
 // ==== Stav čerpadel (neblokující) ====
 bool pump1_active = false;
@@ -69,11 +80,14 @@ unsigned long pump1StopTime = 0;
 bool manualPump1 = false;
 bool lastPumpState = false; // true = aspoň jedno čerpadlo běží
 unsigned long pump1_startTime = 0;
-const unsigned long PUMP1_TIMEOUT = 600000; // limit běhu čerpadla
+const unsigned long PUMP1_TIMEOUT = 150000; // limit běhu čerpadla
 enum PumpSequence { IDLE, PUMP2_RUNNING, PUMP1_WAITING };
 PumpSequence pumpSeq = IDLE;
 unsigned long pump2_runMs = PUMP2_LOW_MODE_MS;
 unsigned long pump2_startTime = 0;
+unsigned long pump2Float3LowSince = 0;
+bool pump2Float4WasClosed = false;
+bool pump2Float4OpenedAfterClosed = false;
 
 
 // struktura pro režim
@@ -100,9 +114,11 @@ const unsigned long MODE_DEBOUNCE_MS = 50;
 
 
 // ==== Pomocná funkce pro RS485 ====
-void rs485Write(const String &msg) {
+void rs485Write(const char *msg) {
   digitalWrite(RS485_DIR, HIGH);   // směr: vysílání
   rs485.print(msg);                // pošli zprávu
+  rs485.print("\r\n");
+  rs485.flush();
   digitalWrite(RS485_DIR, LOW);    // hned zpět na příjem
 }
 
@@ -132,40 +148,49 @@ void sendMonitoringSimple() {
   float tWater = isnan(tempWater) ? 0.0 : tempWater;
   byte activeMode = modeIndex; // 0 = menší objem, 1 = větší objem
 
-  // sestavení jednoduchého řetězce (CSV-like)
-  String msg = "<";
-  msg += pump1State;       msg += ",";
-  msg += pump2State;       msg += ",";
-  msg += airState;         msg += ",";
-  msg += floatState;       msg += ",";
-  msg += String(tWater,1); msg += ",";
-  msg += activeMode;       msg += ",";
-  msg += error_pump1;      msg += ",";
-  msg += error_pump2;
-  msg += ">";
+  // sestavení jednoduchého řetězce bez Arduino String kvůli fragmentaci RAM na Uno
+  char tempBuf[10];
+  char msg[48];
+  dtostrf(tWater, 0, 1, tempBuf);
+  snprintf(msg, sizeof(msg), "<%d,%d,%d,%u,%s,%u,%d,%d>",
+           pump1State ? 1 : 0,
+           pump2State ? 1 : 0,
+           airState ? 1 : 0,
+           (unsigned int)floatState,
+           tempBuf,
+           (unsigned int)activeMode,
+           error_pump1 ? 1 : 0,
+           error_pump2 ? 1 : 0);
 
-  rs485Write(msg + "\r\n");
+  rs485Write(msg);
   Serial.println(msg);
 }
 
 void handleIncomingRS485() {
 
-  static String buffer = "";
+  static char buffer[24];
+  static byte pos = 0;
 
   while (rs485.available()) {
     char c = rs485.read();
 
     if (c == '<') {
-      buffer = "";
+      pos = 0;
     }
 
-    buffer += c;
+    if (pos < sizeof(buffer) - 1) {
+      buffer[pos++] = c;
+      buffer[pos] = '\0';
+    } else {
+      pos = 0;
+      buffer[0] = '\0';
+    }
 
     if (c == '>') {
 
-      if (buffer.startsWith("<FVE:")) {
+      if (strncmp(buffer, "<FVE:", 5) == 0) {
 
-        int val = buffer.substring(5, buffer.length() - 1).toInt();
+        int val = atoi(buffer + 5);
 
         fve_load = (val == 1);
         digitalWrite(FVE_RELAY_PIN, fve_load ? HIGH : LOW);
@@ -176,13 +201,18 @@ void handleIncomingRS485() {
         Serial.println(fve_load);
       }
 
-      buffer = "";
+      pos = 0;
+      buffer[0] = '\0';
     }
   }
 }
 
+bool pumpFaultActive() {
+  return error_pump1 || error_pump2;
+}
+
 void startPumpFromSettler() {
-  if (pump1_active) return;
+  if (pump1_active || pumpFaultActive()) return;
   pump1_active = true;
   pump1_startTime = millis();
   pump1StopTime = 0; // jistota, že je resetován
@@ -192,17 +222,27 @@ void startPumpFromSettler() {
 
 
 void startPumpOutBio(unsigned long runMs) {
-  if (pump2_active) return;
+  if (pump2_active || pumpFaultActive()) return;
   //pauseAir();
   pump2_runMs = runMs;
   pump2_startTime = millis();
+  pump2Float3LowSince = 0;
+  pump2Float4WasClosed = (digitalRead(FLOAT_4) == LOW);
+  pump2Float4OpenedAfterClosed = false;
   pump2_active = true;
   digitalWrite(PUMP2_PIN, HIGH);
   Serial.print("Odčerpávání z biologické nádrže start, čas ms: ");
   Serial.println(pump2_runMs);
+  Serial.print("Pump2 mód: ");
+  Serial.println(modeIndex == 1 ? "vetsi objem" : "mensi objem");
 }
 
 void updatePumpSequence() {
+  if (pumpFaultActive()) {
+    pumpSeq = IDLE;
+    return;
+  }
+
   if (pumpSeq == PUMP2_RUNNING) {
     // Jakmile Pump2 skončí, přejdeme do stavu čekání na Pump1
     if (!pump2_active) {
@@ -211,7 +251,7 @@ void updatePumpSequence() {
   }
   else if (pumpSeq == PUMP1_WAITING) {
     // Spustíme Pump1, jen pokud float1 je HIGH a není chyba
-    if (!error_pump1 && digitalRead(FLOAT_1) == HIGH && digitalRead(FLOAT_3) == HIGH ) {
+    if (digitalRead(FLOAT_1) == HIGH && digitalRead(FLOAT_3) == HIGH ) {
       startPumpFromSettler();
       pumpSeq = IDLE; // sekvence dokončena
     }
@@ -233,7 +273,8 @@ void updatePumps() {
         pump1_startTime = 0; 
         pump1StopTime = 0;
         error_pump1 = true;
-        Serial.println("CHYBA: Čerpadlo 1 – timeout!");
+        pumpSeq = IDLE;
+        Serial.println("CHYBA: porucha čerpadla 1/plovák 4");
     }
     // Zpožděné vypnutí po sepnutí plováku
     else if (pump1StopTime != 0 && millis() >= pump1StopTime) {
@@ -247,23 +288,69 @@ void updatePumps() {
 
   // Pump 2
   if (pump2_active) {
-    if (digitalRead(FLOAT_3) == LOW) {
-      digitalWrite(PUMP2_PIN, LOW);
-      pump2_active = false;
-      Serial.println("Odčerpávání z biologické nádrže zastaveno plovákem 3.");
+    unsigned long elapsed = millis() - pump2_startTime;
+
+    if (digitalRead(FLOAT_4) == LOW) {
+      pump2Float4WasClosed = true;
     }
-    else if (millis() - pump2_startTime >= pump2_runMs) {
+    else if (pump2Float4WasClosed) {
+      pump2Float4OpenedAfterClosed = true;
+    }
+
+    if (digitalRead(FLOAT_3) == LOW) {
+      if (pump2Float3LowSince == 0) {
+        pump2Float3LowSince = millis();
+      }
+
+      if (millis() - pump2Float3LowSince >= FLOAT3_STOP_DELAY_MS) {
+        digitalWrite(PUMP2_PIN, LOW);
+        pump2_active = false;
+        Serial.println("Odčerpávání z biologické nádrže zastaveno plovákem 3.");
+        Serial.print("Pump2 běžela ms: ");
+        Serial.println(elapsed);
+      }
+    }
+    else {
+      pump2Float3LowSince = 0;
+    }
+
+    if (pump2_active && elapsed >= pump2_runMs) {
       digitalWrite(PUMP2_PIN, LOW);
       pump2_active = false;
       Serial.println("Odčerpávání z biologické nádrže hotovo podle času.");
+      Serial.print("Pump2 běžela ms: ");
+      Serial.println(elapsed);
+
+      if (!pump2Float4OpenedAfterClosed) {
+        error_pump2 = true;
+        pumpSeq = IDLE;
+        Serial.println("CHYBA: porucha čerpadla 2/plovák 4");
+      }
     }
   }
 
 }
 
 // ==== Cyklus ====
+void syncModeBeforePumpCycle() {
+  uint8_t newIndex = readModeFromFloats();
+
+  if (newIndex != modeIndex) {
+    modeIndex = newIndex;
+    lastModeCandidate = newIndex;
+    applyMode();
+  }
+}
+
 void runCycle() {
-  if (pumpSeq == IDLE && !error_pump2 && digitalRead(FLOAT_3) == HIGH) {
+  syncModeBeforePumpCycle();
+
+  if (pumpFaultActive()) {
+    Serial.println("runCycle: porucha cerpadla/plovaku 4, cerpani blokovano do resetu.");
+    return;
+  }
+
+  if (pumpSeq == IDLE && digitalRead(FLOAT_3) == HIGH) {
     if (modes[modeIndex].pumpEnabled && current_pump2_runMs > 0) {
       startPumpOutBio(current_pump2_runMs); // spustí Pump2
       pumpSeq = PUMP2_RUNNING;
@@ -291,6 +378,9 @@ void manageAir(){
     airTimer = now;
     Serial.println("Vzduch zapnut.");
   }
+
+  // Výstup vzduchování se drží podle vlastního časovače bez ohledu na chyby čerpadel.
+  digitalWrite(AIR_PIN, air_on ? HIGH : LOW);
 }
 
 
@@ -316,6 +406,8 @@ void safeRestart() {
 
 // Zavolat v místě, kde už máš DateTime nowRTC = rtc.now();
 void checkAutoRestart(const DateTime &nowRTC) {
+  if (!AUTO_RESTART_ENABLED) return;
+
   // Na prvním volání inicializuj lastResetDay
   if (lastResetDay == 0) {
     lastResetDay = nowRTC.day();
@@ -399,11 +491,57 @@ void checkMode() {
 }
 
 
+void print2Digits(int value) {
+  if (value < 10) Serial.print('0');
+  Serial.print(value);
+}
+
+void printRtcTime(const DateTime &nowRTC) {
+  print2Digits(nowRTC.hour());
+  Serial.print(':');
+  print2Digits(nowRTC.minute());
+  Serial.print(':');
+  print2Digits(nowRTC.second());
+}
+
+void printRtcDate(const DateTime &nowRTC) {
+  Serial.print(nowRTC.year());
+  Serial.print('-');
+  print2Digits(nowRTC.month());
+  Serial.print('-');
+  print2Digits(nowRTC.day());
+}
+
+bool rtcTimeLooksValid(const DateTime &nowRTC) {
+  return nowRTC.year() >= 2024 && nowRTC.year() <= 2099;
+}
+
+bool detectRtc(bool logResult) {
+  bool ok = rtc.begin();
+
+  if (logResult) {
+    Serial.print("RTC stav: ");
+    Serial.println(ok ? "OK" : "NEDOSTUPNE");
+  }
+
+  return ok;
+}
+
+bool ensureRtcAvailable(unsigned long now) {
+  if (rtcAvailable) return true;
+  if (lastRtcRetry != 0 && now - lastRtcRetry < RTC_RETRY_MS) return false;
+
+  lastRtcRetry = now;
+  rtcAvailable = detectRtc(true);
+  return rtcAvailable;
+}
+
 
 
 void setup() {
 
   // --- 1) Pojistka proti zacyklení watchdogem ---
+  lastResetFlags = MCUSR;
   MCUSR = 0;        
   wdt_disable();    
   delay(50);        
@@ -436,11 +574,19 @@ void setup() {
   // --- 4) Inicializace základních periferií ---
   Serial.begin(9600);
   rs485.begin(9600);
+  Serial.print("Reset flags: ");
+  Serial.println(lastResetFlags, BIN);
+  if (lastResetFlags & _BV(WDRF)) {
+    Serial.println("Posledni reset provedl watchdog.");
+  }
 
   Wire.begin();
+#if defined(WIRE_HAS_TIMEOUT)
+  Wire.setWireTimeout(3000, true);
+#endif
   delay(10);         // malá prodleva pomáhá stabilizaci RTC/I2C
 
-  rtc.begin();       // až po Wire.begin()
+  rtcAvailable = detectRtc(true);       // až po Wire.begin()
 
 
 
@@ -451,19 +597,23 @@ void setup() {
   // --- 8) Nastavení režimů ---
   modes[0].pump2_runMs  = PUMP2_LOW_MODE_MS;
   modes[0].pumpEnabled  = true;
-  modes[0].airOnMs      = 30UL * 60UL * 1000UL;
-  modes[0].airOffMs     = 30UL * 60UL * 1000UL;
+  modes[0].airOnMs      = 20UL * 60UL * 1000UL;
+  modes[0].airOffMs     = 40UL * 60UL * 1000UL;
 
   modes[1].pump2_runMs  = PUMP2_HIGH_MODE_MS;
   modes[1].pumpEnabled  = true;
-  modes[1].airOnMs      = 50UL * 60UL * 1000UL;
-  modes[1].airOffMs     = 10UL * 60UL * 1000UL;
+  modes[1].airOnMs      = 30UL * 60UL * 1000UL;
+  modes[1].airOffMs     = 30UL * 60UL * 1000UL;
 
   modeIndex = loadSavedMode();
   modeIndex = readModeFromFloats();
   lastModeCandidate = modeIndex;
 
   applyMode();
+
+  // Když se hlavní smyčka opravdu zasekne, AVR watchdog provede bezpečný restart.
+  // Běžný průchod loopem ho krmí na konci smyčky.
+  wdt_enable(WDTO_8S);
 }
 
 
@@ -517,35 +667,57 @@ void loop() {
   if (now - lastCycleCheck >= CYCLE_INTERVAL) {
     lastCycleCheck = now; // aktualizace času poslední kontroly
 
+    if (!ensureRtcAvailable(now)) {
+      Serial.println("RTC nedostupne, casove cykly preskoceny.");
+      updatePumps();
+      updatePumpSequence();
+      manageAir();
+      wdt_reset();
+      return;
+    }
+
     DateTime nowRTC = rtc.now(); // načtení aktuálního času z RTC
 
+    if (!rtcTimeLooksValid(nowRTC)) {
+      rtcAvailable = false;
+      Serial.println("RTC vraci neplatny cas, casove cykly preskoceny.");
+      updatePumps();
+      updatePumpSequence();
+      manageAir();
+      wdt_reset();
+      return;
+    }
+
     Serial.print("RTC čas: ");
-    Serial.println(nowRTC.timestamp(DateTime::TIMESTAMP_TIME));
+    printRtcTime(nowRTC);
+    Serial.println();
     Serial.print("RTC datum: ");
-    Serial.println(nowRTC.timestamp(DateTime::TIMESTAMP_DATE));
+    printRtcDate(nowRTC);
+    Serial.println();
     Serial.println("Kontrola cyklu proběhla");
     checkAutoRestart(nowRTC);
 
-    // ===== Ranní cyklus =====
-        if (nowRTC.hour() == 6 && nowRTC.minute() <= 1 && !cycleRunMorning) {
-        runCycle();                 // spuštění čerpadel
-        cycleRunMorning = true;     // nastavení příznaku, že ranní cyklus byl proveden
-        Serial.println("Čerpadla spuštěna ráno"); // zápis do logu
-    }
-
-    // ===== Odpolední cyklus =====
-        if (nowRTC.hour() == 18 && nowRTC.minute() <= 1 && !cycleRunAfternoon) {
-        runCycle();                 // spuštění čerpadel
-        cycleRunAfternoon = true;   // nastavení příznaku, že odpolední cyklus byl proveden
-        Serial.println("Čerpadla spuštěna odpoledne"); // zápis do logu
-    }
-
     // ===== Reset flagu pro nový den =====
-    // Pokud nastal nový den, resetujeme příznaky cyklů
     if (nowRTC.day() != lastDay) {
-        cycleRunMorning = false;
-        cycleRunAfternoon = false;
-        lastDay = nowRTC.day();     // aktualizace dne
+      for (byte i = 0; i < PUMP_CYCLE_COUNT; i++) {
+        cycleRunToday[i] = false;
+      }
+      lastDay = nowRTC.day();     // aktualizace dne
+    }
+
+    // ===== Čerpací cykly =====
+    for (byte i = 0; i < PUMP_CYCLE_COUNT; i++) {
+      if (nowRTC.hour() == PUMP_CYCLE_HOURS[i] &&
+          nowRTC.minute() == PUMP_CYCLE_MINUTES[i] &&
+          !cycleRunToday[i]) {
+        runCycle();               // spuštění čerpadel
+        cycleRunToday[i] = true;  // tento čas už byl dnes proveden
+        Serial.print("Čerpadla spuštěna v ");
+        print2Digits(PUMP_CYCLE_HOURS[i]);
+        Serial.print(':');
+        print2Digits(PUMP_CYCLE_MINUTES[i]);
+        Serial.println();
+      }
     }
   }
 
@@ -553,6 +725,6 @@ void loop() {
   updatePumpSequence();
   manageAir();
 
-
+  wdt_reset();
 
 }
