@@ -37,7 +37,10 @@ class DS18B20Sensor:
         try:
             self.bus.convert_temp()
             time.sleep_ms(750)
-            return self.bus.read_temp(rom)
+            value = self.bus.read_temp(rom)
+            if value is None or not -55 <= value <= 125 or value == 85:
+                return None
+            return value
         except Exception:
             self.rom = None
             return None

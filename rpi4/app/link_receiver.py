@@ -21,6 +21,7 @@ class PicoLinkReceiver:
         self.last_rx_line = ""
         self.last_partial_log_ts = 0.0
         self.debug_log_path = "/home/milan/logs/home_as/link_debug.log"
+        self.tx_audit_log_path = "/home/milan/logs/home_as/pico_tx.log"
         self._ensure_debug_log_dir()
 
     # ------------------------------
@@ -96,6 +97,53 @@ class PicoLinkReceiver:
             self.disconnect()
             return None
 
+    def write_line(self, line):
+        """Odešle jeden řádek na Pico Master po téže sériové lince."""
+        payload = (line + "\n").encode("utf-8")
+        return self._write_payload(payload)
+
+    def write_temperature_frame(self, line):
+        """Odešle 16bajtový teplotní rámec pro paketový PIO přijímač Pico Masteru."""
+        payload = (line + "\n").encode("utf-8")
+        if len(payload) > 16:
+            self._tx_audit(f"TX teplota: CHYBA, rámec je příliš dlouhý: {payload!r}")
+            return False
+        payload += b" " * (16 - len(payload))
+        return self._write_payload(payload)
+
+    def write_control_frame(self, line):
+        """Odešle krátký řídicí rámec do PIO UART přijímače Pico Masteru."""
+        payload = (line + "\n").encode("utf-8")
+        if len(payload) > 16:
+            self._tx_audit(f"TX řízení: CHYBA, rámec je příliš dlouhý: {payload!r}")
+            return False
+        payload += b" " * (16 - len(payload))
+        return self._write_payload(payload, audit=False)
+
+    def _write_payload(self, payload, audit=True):
+        if audit:
+            self._tx_audit(
+                "TX požadavek: "
+                f"text={payload!r} bytes={len(payload)} hex={payload.hex()}"
+            )
+
+        if not self.ser:
+            if audit:
+                self._tx_audit("TX výsledek: NEODESLÁNO, sériová linka není připojená")
+            return False
+
+        try:
+            written = self.ser.write(payload)
+            self.ser.flush()
+            if audit:
+                self._tx_audit(f"TX výsledek: OK, zapsáno={written}/{len(payload)} bajtů")
+            return True
+        except (OSError, serial.SerialException) as e:
+            self._debug_log(f"[LINK] TX failed: {e}")
+            self._tx_audit(f"TX výsledek: CHYBA: {e}")
+            self.disconnect()
+            return False
+
     def disconnect(self):
         if self.ser:
             try:
@@ -140,3 +188,13 @@ class PicoLinkReceiver:
                 f.write(line + "\n")
         except Exception as e:
             print(f"[LINK] Failed to write debug log: {e}")
+
+    def _tx_audit(self, message):
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        line = f"{ts} {message}"
+        print(line)
+        try:
+            with open(self.tx_audit_log_path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception as e:
+            print(f"[LINK] Failed to write TX audit log: {e}")

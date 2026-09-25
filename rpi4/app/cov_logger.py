@@ -1,6 +1,8 @@
 import os
 import time
 import re
+import json
+import math
 from datetime import date, datetime
 
 
@@ -20,22 +22,18 @@ class CovLogger:
 
     def _write_line(self, m):
         ts = time.strftime("%H:%M:%S")
-        outdoor_temp = m.temp_outdoor
-        if outdoor_temp is None:
-            return
         line = (
             f"{ts} "
             f"P1={int(m.pump1)} P2={int(m.pump2)} AIR={int(m.air)} "
             f"MODE={int(m.mode)} "
             f"F1={int(m.float1)} F2={int(m.float2)} "
             f"F3={int(m.float3)} F4={int(m.float4)} "
-            f"EP1={int(m.error_pump1)} EP2={int(m.error_pump2)} "
-            f"TW={m.temp_water:.1f} TO={outdoor_temp:.1f}"
+            f"EP1={int(m.error_pump1)} EP2={int(m.error_pump2)}"
         )
         self._write(line)
 
-    def update(self, m):
-        if m is None:
+    def update(self, m, cov_fresh=True):
+        if m is None or not cov_fresh:
             return
 
         state = (
@@ -44,11 +42,6 @@ class CovLogger:
             m.float1, m.float2, m.float3, m.float4,
             m.error_pump1, m.error_pump2,
         )
-
-        if self.last_state is None:
-            self.last_state = state
-            self._write_line(m)
-            return
 
         if self.last_state == state:
             return
@@ -61,8 +54,50 @@ class CovHistoryStore:
     TO_PATTERN = re.compile(r"\bTO=(-?\d+(?:\.\d+)?)")
     TA_PATTERN = re.compile(r"\bTA=(-?\d+(?:\.\d+)?)")
 
-    def __init__(self, base_dir="/home/milan/logs/home_as/cov"):
+    def __init__(self, base_dir="/home/milan/logs/home_as/cov",
+                 temperature_dir="/home/milan/logs/home_as/outdoor_temperature"):
         self.base_dir = base_dir
+        self.temperature_dir = temperature_dir
+
+    def record_air_temperature(self, temp, day=None):
+        """Uloží pouze změnu denního minima/maxima, mimo stavový log ČOV."""
+        if temp is None or not math.isfinite(temp):
+            return
+
+        day = day or date.today()
+        value = round(temp, 1)
+        path = os.path.join(self.temperature_dir, f"{day.isoformat()}.json")
+        bucket = self._read_temperature_file(path)
+        if bucket is None:
+            new_min = new_max = value
+        else:
+            new_min = min(bucket["min"], value)
+            new_max = max(bucket["max"], value)
+            if new_min == bucket["min"] and new_max == bucket["max"]:
+                return
+
+        os.makedirs(self.temperature_dir, exist_ok=True)
+        temporary_path = path + ".tmp"
+        try:
+            with open(temporary_path, "w", encoding="utf-8") as handle:
+                json.dump({"min": new_min, "max": new_max}, handle)
+                handle.write("\n")
+            os.replace(temporary_path, path)
+        finally:
+            if os.path.exists(temporary_path):
+                os.unlink(temporary_path)
+
+    def _read_temperature_file(self, path):
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            minimum = float(data["min"])
+            maximum = float(data["max"])
+            if math.isfinite(minimum) and math.isfinite(maximum) and minimum <= maximum:
+                return {"min": minimum, "max": maximum}
+        except (OSError, ValueError, TypeError, KeyError):
+            pass
+        return None
 
     def get_air_temperature_history(self, today=None, live_temp=None):
         today = today or date.today()
@@ -93,6 +128,21 @@ class CovHistoryStore:
                 path = os.path.join(self.base_dir, name)
                 self._consume_file(path, summary, file_day, today)
 
+        if os.path.isdir(self.temperature_dir):
+            for name in sorted(os.listdir(self.temperature_dir)):
+                if not name.endswith(".json"):
+                    continue
+                try:
+                    file_day = datetime.strptime(name[:-5], "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+                if file_day.year != today.year:
+                    continue
+                bucket = self._read_temperature_file(os.path.join(self.temperature_dir, name))
+                if bucket is not None:
+                    for temp in (bucket["min"], bucket["max"]):
+                        self._update_for_day(summary, temp, file_day, today)
+
         if live_temp is not None:
             self._update(summary["day"], live_temp)
             self._update(summary["month"], live_temp)
@@ -112,16 +162,17 @@ class CovHistoryStore:
                         continue
 
                     temp = float(match.group(1))
-                    self._update(summary["year"], temp)
-                    self._update(summary["months"][file_day.month], temp)
-
-                    if file_day.month == today.month:
-                        self._update(summary["month"], temp)
-
-                    if file_day == today:
-                        self._update(summary["day"], temp)
+                    self._update_for_day(summary, temp, file_day, today)
         except OSError:
             return
+
+    def _update_for_day(self, summary, temp, file_day, today):
+        self._update(summary["year"], temp)
+        self._update(summary["months"][file_day.month], temp)
+        if file_day.month == today.month:
+            self._update(summary["month"], temp)
+        if file_day == today:
+            self._update(summary["day"], temp)
 
     def _update(self, bucket, temp):
         if bucket["min"] is None or temp < bucket["min"]:

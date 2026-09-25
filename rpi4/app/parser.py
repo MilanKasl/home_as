@@ -2,7 +2,7 @@
 
 def parse_cov_frame(line: str):
     """
-    Očekává: <P1,P2,AIR,FLOATMASK,TW,MODE,EP1,EP2,TO>
+    Očekává: <P1,P2,AIR,FLOATMASK,TW,MODE,EP1,EP2[,TO[,COV_AGE]]>
     Vrací dict nebo None
     """
     if not (line.startswith("<") and line.endswith(">")):
@@ -12,7 +12,7 @@ def parse_cov_frame(line: str):
         body = line[1:-1]
         parts = body.split(",")
 
-        if len(parts) not in (8, 9):
+        if len(parts) not in (8, 9, 10):
             return None
 
         data = {
@@ -26,6 +26,11 @@ def parse_cov_frame(line: str):
             "EP2": int(parts[7]),
         }
         data["TO"] = float(parts[8]) if len(parts) == 9 and parts[8] != "" else None
+        if len(parts) == 10:
+            data["TO"] = float(parts[8]) if parts[8] != "" else None
+            data["COV_AGE"] = int(parts[9])
+        else:
+            data["COV_AGE"] = None
         return data
 
     except (TypeError, ValueError, IndexError):
@@ -66,18 +71,34 @@ def parse_reg_frame(line: str):
     except (TypeError, ValueError, IndexError):
         return None
 
-def parse_fve_load_frame(line: str):
-    """
-    Očekává: FVE:0 nebo FVE:1
-    """
-    if not line.startswith("FVE:"):
+
+def parse_heating_frame(line: str):
+    """Očekává: H:MODE,ACTIVE,REASON[,END_HOUR[,TUV_TEMP]]."""
+    if not line.startswith("H:"):
         return None
 
     try:
-        _, raw_value = line.split(":", 1)
-        value = int(raw_value)
-        if value not in (0, 1):
+        parts = line[2:].split(",")
+        if len(parts) not in (3, 4, 5):
             return None
-        return {"LOAD": value}
+        mode, active, reason = parts[:3]
+        if mode not in ("A", "T", "K", "0"):
+            return None
+        if active not in ("T", "K", "0"):
+            return None
+        end_hour = int(parts[3]) if len(parts) >= 4 else None
+        if end_hour is not None and not 0 <= end_hour <= 24:
+            return None
+        tuv_temp = float(parts[4]) if len(parts) == 5 and parts[4] else None
+        if tuv_temp is not None and (not -55 <= tuv_temp <= 125 or tuv_temp == 85):
+            tuv_temp = None
+        return {
+            "MODE": mode,
+            "ACTIVE": active,
+            "REASON": reason[:20],
+            "END_HOUR": end_hour,
+            "TUV_TEMP": tuv_temp,
+            "HAS_TUV_TEMP": len(parts) == 5,
+        }
     except (TypeError, ValueError):
         return None

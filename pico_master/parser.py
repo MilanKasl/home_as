@@ -5,24 +5,28 @@ def parse_cov(frame, state):
     # <P1,P2,AIR,FLOATMASK,TW,MODE,EP1,EP2>
     parts = frame.split(",")
     if len(parts) != 8:
-        return
+        return False
 
-    s = state.stat
+    try:
+        s = state.stat
 
-    s["P1"] = int(parts[0])
-    s["P2"] = int(parts[1])
-    s["AIR"] = int(parts[2])
+        s["P1"] = int(parts[0])
+        s["P2"] = int(parts[1])
+        s["AIR"] = int(parts[2])
 
-    mask = int(parts[3])
-    s["F1"] = (mask >> 0) & 1
-    s["F2"] = (mask >> 1) & 1
-    s["F3"] = (mask >> 2) & 1
-    s["F4"] = (mask >> 3) & 1
+        mask = int(parts[3])
+        s["F1"] = (mask >> 0) & 1
+        s["F2"] = (mask >> 1) & 1
+        s["F3"] = (mask >> 2) & 1
+        s["F4"] = (mask >> 3) & 1
 
-    s["TW"] = float(parts[4])
-    s["MODE"] = int(float(parts[5]))
-    s["EP1"] = int(parts[6])
-    s["EP2"] = int(parts[7])
+        s["TW"] = float(parts[4])
+        s["MODE"] = int(float(parts[5]))
+        s["EP1"] = int(parts[6])
+        s["EP2"] = int(parts[7])
+        return True
+    except (ValueError, TypeError, IndexError):
+        return False
 
 
 def parse_reg(frame, state):
@@ -56,20 +60,6 @@ def parse_reg(frame, state):
     except:
         pass
 
-def parse_fve(frame, state):
-    # formát: FVE:1 nebo FVE:0
-    if not frame.startswith("FVE:"):
-        return False
-
-    try:
-        val = int(frame.split(":")[1])
-        state.fve["LOAD"] = val
-    except:
-        pass
-
-    return True
-
-
 def parse_outdoor(frame, state):
     if not frame.startswith("OUT:"):
         return False
@@ -80,3 +70,33 @@ def parse_outdoor(frame, state):
         pass
 
     return True
+
+
+def parse_heating(frame, state):
+    # formát: HEAT:MODE,ACTIVE,REASON,END_HOUR,TUV_TEMP
+    if not frame.startswith("HEAT:"):
+        return False
+
+    try:
+        parts = frame[5:].split(",")
+        if len(parts) not in (3, 4, 5):
+            return False
+        mode, active, reason = parts[:3]
+        if mode not in ("A", "T", "K", "0"):
+            return False
+        if active not in ("T", "K", "0"):
+            return False
+        end_hour = int(parts[3]) if len(parts) >= 4 else state.heating["END_HOUR"]
+        if not 0 <= end_hour <= 24:
+            return False
+        tuv_temp = float(parts[4]) if len(parts) == 5 and parts[4] else None
+        if tuv_temp is not None and (not -55 <= tuv_temp <= 125 or tuv_temp == 85):
+            tuv_temp = None
+        state.heating["MODE"] = mode
+        state.heating["ACTIVE"] = active
+        state.heating["REASON"] = reason[:20]
+        state.heating["END_HOUR"] = end_hour
+        state.heating["TUV_TEMP"] = tuv_temp
+        return True
+    except (ValueError, TypeError):
+        return False

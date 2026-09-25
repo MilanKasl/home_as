@@ -5,10 +5,11 @@ from machine import UART, Pin  # type: ignore
 uart_out = UART(0, baudrate=9600, tx=Pin(0), rx=Pin(1))
 
 _buffer = ""
-_MAX_BUFFER = 256   # ochrana proti zahlcení
+_MAX_BUFFER = 128
 
-# ======= Polling Mega (non-blocking) =======
-def poll_mega(on_log=None):
+
+def poll_commands(on_temperature=None, on_heating_mode=None):
+    """Přečte teploty a povely ohřevu od Pico Masteru."""
     global _buffer
 
     while uart_out.any():
@@ -16,31 +17,39 @@ def poll_mega(on_log=None):
         if not chunk:
             break
 
-        try:
-            text = chunk.decode("utf-8", "ignore")
-        except:
-            continue
-
-        _buffer += text
-
-        # ochrana bufferu
+        _buffer += chunk.decode("utf-8", "ignore")
         if len(_buffer) > _MAX_BUFFER:
             _buffer = ""
 
         while True:
             start = _buffer.find("<")
             end = _buffer.find(">", start + 1)
-
-            if start >= 0 and end > start:
-                frame = _buffer[start + 1:end].strip()
-                _buffer = _buffer[end + 1:]
-
-                if frame.startswith("LOG:"):
-                    val = frame.split(":", 1)[1]
-                    if on_log:
-                        on_log(val)
-            else:
+            if start < 0 or end <= start:
                 break
+
+            frame = _buffer[start + 1:end].strip()
+            _buffer = _buffer[end + 1:]
+            if frame.startswith("TEMP:"):
+                try:
+                    # Starší dvojice TUV,AKU je přijata, TUV se už nebere z linky.
+                    parts = frame[5:].split(",")
+                    if len(parts) not in (1, 2):
+                        continue
+                    aku_c = int(parts[-1])
+                    if -55 <= aku_c <= 125:
+                        if on_temperature:
+                            on_temperature(aku_c)
+                except (ValueError, TypeError):
+                    pass
+            elif frame.startswith("HEAT:"):
+                mode = frame[5:].strip().upper()
+                if mode in ("A", "T", "K", "0") and on_heating_mode:
+                    on_heating_mode(mode)
+
+
+def poll_temperature(on_temperature=None):
+    """Zpětně kompatibilní obsluha pouze teplotních rámců."""
+    poll_commands(on_temperature=on_temperature)
 
 def send_frame(frame):
     uart_out.write(frame + "\n")

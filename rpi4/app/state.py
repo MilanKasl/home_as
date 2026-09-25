@@ -93,6 +93,7 @@ class SystemState:
             "TO": None,
             "EP1": 0,
             "EP2": 0,
+            "COV_AGE": None,
         }
 
         # Regulátory FVE (raw data)
@@ -125,8 +126,12 @@ class SystemState:
             "TUV": None,    # TUV
         }
 
-        # FVE vytěžování (globální)
-        self.fve_load = 0
+        self.heating = {
+            "MODE": "A",
+            "ACTIVE": "0",
+            "REASON": "NO_DATA",
+            "END_HOUR": None,
+        }
 
     # -------------------------
     # Aktualizace ČOV
@@ -147,6 +152,7 @@ class SystemState:
         self.cov["TO"] = data.get("TO")
         self.cov["EP1"] = data["EP1"]
         self.cov["EP2"] = data["EP2"]
+        self.cov["COV_AGE"] = data.get("COV_AGE")
 
     # -------------------------
     # Aktualizace regulátorů
@@ -167,5 +173,11 @@ class SystemState:
         self.reg[idx]["VBAT_MIN_DAY"] = data["VBAT_MIN_DAY"]
         self.reg[idx]["R3111"] = data["R3111"]
 
-    def update_fve_load(self, data: dict):
-        self.fve_load = data["LOAD"]
+    def update_from_heating(self, data: dict):
+        self.heating["MODE"] = data["MODE"]
+        self.heating["ACTIVE"] = data["ACTIVE"]
+        self.heating["REASON"] = data["REASON"]
+        if data.get("END_HOUR") is not None:
+            self.heating["END_HOUR"] = data["END_HOUR"]
+        if data.get("HAS_TUV_TEMP"):
+            self.tank["TUV"] = data["TUV_TEMP"]

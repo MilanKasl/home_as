@@ -14,7 +14,6 @@ class RegulatorLogger:
         self.last_log_ts = {
             1: 0,
         }
-        self.last_load_state = None
 
     def _logfile_path(self):
         today = date.today().isoformat()
@@ -65,20 +64,3 @@ class RegulatorLogger:
             line = f"{ts} {self._reg_snapshot(regulators)}"
 
             self._write(line)
-
-
-    def update_load(self, load: int, regulators: dict = None):
-        if self.last_load_state is None:
-            self.last_load_state = load
-            return
-
-        if load == self.last_load_state:
-            return
-
-        self.last_load_state = load
-
-        ts = time.strftime("%H:%M:%S")
-        text = "ZAPNUTO" if load == 1 else "VYPNUTO"
-        snapshot = self._reg_snapshot(regulators)
-        suffix = f" {snapshot}" if snapshot else ""
-        self._write(f"{ts} VYTĚŽOVÁNÍ: {text}{suffix}")

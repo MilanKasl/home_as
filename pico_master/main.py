@@ -5,9 +5,9 @@ import time
 
 from state import SystemState
 from rs485 import read_uart
-from parser import parse_cov, parse_reg, parse_fve, parse_outdoor
+from parser import parse_cov, parse_reg, parse_outdoor, parse_heating
 from machine import WDT
-from pio_uart_tx import PIOUARTTx
+from pio_uart_tx import PIOUARTRx, PIOUARTTx
 
 # ================= Watchdog řízení =================
 DEV_MODE = False         # při ladění True, v provozu False
@@ -15,27 +15,10 @@ WDT_START_DELAY = 60000  # 60 s po startu
 WDT_TIMEOUT = 8000       # max pro RP2350
 HOST_UART_BAUDRATE = 115200
 HOST_UART_TX_PIN = 8
+HOST_UART_RX_PIN = 9
 
 wdt = None
 start_time = time.ticks_ms()
-
-
-# ==============================
-# STAV LOGIKY
-# ==============================
-last_air_state = None
-AIR_REPEAT_INTERVAL = 60000  # 60 sekund
-last_air_send_time = 0
-last_fve_state = None
-FVE_REPEAT_INTERVAL = 60000  # 60 sekund
-last_fve_send_time = 0
-
-def send_regulator_logic(uart, state):
-    """
-    Pošle povel regulátorům:
-    <LOG:0> nebo <LOG:1>
-    """
-    uart.write(f"<LOG:{state}>")
 
 
 # ==============================
@@ -53,7 +36,13 @@ state = SystemState()
 buf_cov = ""
 buf_fve = ""
 last_send = time.ticks_ms()
+last_cov_rx = None
+last_heating_rx = None
 host_uart = PIOUARTTx(sm_id=0, pin_num=HOST_UART_TX_PIN, baudrate=HOST_UART_BAUDRATE)
+host_uart_rx = PIOUARTRx(sm_id=1, pin_num=HOST_UART_RX_PIN, baudrate=HOST_UART_BAUDRATE)
+host_rx_buffer = ""
+last_host_rx_debug = time.ticks_ms()
+HOST_RX_DEBUG_INTERVAL_MS = 10000
 
 
 def write_host_lines(lines):
@@ -61,46 +50,81 @@ def write_host_lines(lines):
     host_uart.write(payload)
 
 
+def forward_host_commands():
+    """Předá platné teploty a povely ohřevu z RPi4 do Pico Slave."""
+    global host_rx_buffer, last_host_rx_debug
+
+    chunk = host_uart_rx.read()
+    if not chunk:
+        now = time.ticks_ms()
+        if time.ticks_diff(now, last_host_rx_debug) >= HOST_RX_DEBUG_INTERVAL_MS:
+            pin_level, falling_edges = host_uart_rx.diagnostics()
+            print(
+                "HOST RX: za posledních 10 s nepřišla žádná data z RPi4; "
+                "GPIO9={}, sestupné hrany={}".format(pin_level, falling_edges)
+            )
+            last_host_rx_debug = now
+        return
+
+    received = chunk.decode("utf-8", "ignore")
+    print("HOST RX z RPi4:", repr(received))
+    last_host_rx_debug = time.ticks_ms()
+    host_rx_buffer += received
+    if len(host_rx_buffer) > 128:
+        print("HOST RX: buffer je příliš dlouhý, zahazuji data")
+        host_rx_buffer = ""
+        return
+
+    while True:
+        start = host_rx_buffer.find("<")
+        end = host_rx_buffer.find(">", start + 1)
+        if start < 0 or end <= start:
+            return
+
+        frame = host_rx_buffer[start + 1:end].strip()
+        host_rx_buffer = host_rx_buffer[end + 1:]
+        if frame.startswith("TEMP:"):
+            try:
+                parts = frame[5:].split(",")
+                if len(parts) not in (1, 2):
+                    raise ValueError("invalid temperature frame")
+                aku_c = int(parts[-1])
+                if -55 <= aku_c <= 125:
+                    uart_fve.write("<TEMP:{}>".format(aku_c))
+                    print("TEMP -> Pico Slave: AKU={} C".format(aku_c))
+                else:
+                    print("HOST RX: teploty mimo povolený rozsah:", frame)
+            except (ValueError, TypeError):
+                print("HOST RX: neplatný teplotní rámec:", frame)
+        elif frame.startswith("HEAT:"):
+            mode = frame[5:].strip().upper()
+            if mode in ("A", "T", "K", "0"):
+                uart_fve.write("<HEAT:{}>".format(mode))
+                print("HEAT -> Pico Slave: režim={}".format(mode))
+            else:
+                print("HOST RX: neplatný povel ohřevu:", frame)
+
+
 # ==============================
 # HLAVNÍ SMYČKA
 # ==============================
 while True:
     try:
+        forward_host_commands()
+
         # ----- ČOV -----
         frame, buf_cov = read_uart(uart_cov, buf_cov)
         if frame:
-            parse_cov(frame, state)
+            if parse_cov(frame, state):
+                last_cov_rx = time.ticks_ms()
 
         # ----- FVE -----
         frame, buf_fve = read_uart(uart_fve, buf_fve)
         if frame:
-            if not parse_fve(frame, state) and not parse_outdoor(frame, state):
+            if parse_heating(frame, state):
+                last_heating_rx = time.ticks_ms()
+            elif not parse_outdoor(frame, state):
                 parse_reg(frame, state)
-
-        #------FVE přebytek------
-        fve = state.fve["LOAD"]
-        now = time.ticks_ms()
-
-        # ===== při změně okamžitě =====
-        if last_fve_state is None or fve != last_fve_state:
-            last_fve_state = fve
-            last_fve_send_time = now
-            uart_cov.write(f"<FVE:{fve}>\n")
-
-        # ===== periodické potvrzení =====
-        elif time.ticks_diff(now, last_fve_send_time) > FVE_REPEAT_INTERVAL:
-            last_fve_send_time = now
-            uart_cov.write(f"<FVE:{fve}>\n")     
-
-        # ----- LOGIKA -----
-        air = state.stat["AIR"]
-        if last_air_state is None or air != last_air_state:
-            last_air_state = air
-            last_air_send_time = now
-            send_regulator_logic(uart_fve, air)
-        elif time.ticks_diff(now, last_air_send_time) > AIR_REPEAT_INTERVAL:
-            last_air_send_time = now
-            send_regulator_logic(uart_fve, air)
 
         # ----- USB OUTPUT -----
         if time.ticks_diff(time.ticks_ms(), last_send) > 500:
@@ -108,7 +132,7 @@ while True:
             out = []
 
             out.append(
-                "<{},{},{},{},{:.1f},{},{},{},{}>".format(
+                "<{},{},{},{},{:.1f},{},{},{},{},{}>".format(
                     state.stat["P1"],
                     state.stat["P2"],
                     state.stat["AIR"],
@@ -118,13 +142,11 @@ while True:
                     state.stat["EP1"],
                     state.stat["EP2"],
                     "{:.1f}".format(state.stat["TO"]) if state.stat["TO"] is not None else "",
+                    time.ticks_diff(time.ticks_ms(), last_cov_rx) // 1000
+                    if last_cov_rx is not None else -1,
                 )
             )
             
-            out.append(
-                "FVE:{}".format(state.fve["LOAD"])
-            )
-
             r1 = state.reg[1]
 
             out.append(
@@ -133,6 +155,19 @@ while True:
                     r1["VBAT_MAX_DAY"], r1["VBAT_MIN_DAY"], r1["R3111"]
                 )
             )
+
+            heating_fresh = (
+                last_heating_rx is not None
+                and time.ticks_diff(time.ticks_ms(), last_heating_rx) <= 3000
+            )
+            out.append("H:{},{},{},{},{}".format(
+                state.heating["MODE"],
+                state.heating["ACTIVE"] if heating_fresh else "0",
+                state.heating["REASON"] if heating_fresh else "NO_DATA",
+                state.heating["END_HOUR"],
+                "{:.2f}".format(state.heating["TUV_TEMP"])
+                if heating_fresh and state.heating["TUV_TEMP"] is not None else "",
+            ))
 
             write_host_lines(out)
 

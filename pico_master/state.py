@@ -17,11 +17,6 @@ class SystemState:
             "EP2": 0,
         }
 
-        # ===== FVE =====
-        self.fve = {
-            "LOAD": 0
-        }
-        
         self.reg = {
             1: {
                 "BATT": 0.0,
@@ -34,6 +29,14 @@ class SystemState:
                 "VBAT_MIN_DAY": 0.0,
                 "R3111": 0.0,
             },
+        }
+
+        self.heating = {
+            "MODE": "A",
+            "ACTIVE": "0",
+            "REASON": "NO_DATA",
+            "END_HOUR": 17,
+            "TUV_TEMP": None,
         }
 
 

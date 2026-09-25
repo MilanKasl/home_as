@@ -11,6 +11,7 @@ class DashboardLayout:
         self.values = {}
         self.indicators = {}
         self.cov_indicators = {}
+        self.heating_buttons = {}
 
 
         self.setup_window()
@@ -598,100 +599,141 @@ class DashboardLayout:
     def build_fve_view(self):
         root = self.view_fve
 
-        root.grid_rowconfigure(0, weight=0)
-        root.grid_rowconfigure(1, weight=1)
+        root.grid_rowconfigure(0, weight=1)
+        root.grid_rowconfigure(1, weight=0)
         root.grid_columnconfigure(0, weight=1)
+        root.grid_columnconfigure(1, weight=1)
+
+        panel = tk.Frame(
+            root,
+            bg=BG_PANEL,
+            highlightthickness=1,
+            highlightbackground="#333333",
+        )
+        panel.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=10, pady=10)
 
         tk.Label(
-            root,
-            text="FVE – DETAIL",
+            panel,
+            text="RUČNÍ OVLÁDÁNÍ OHŘEVU",
             fg=FG_MAIN,
-            bg=BG_MAIN,
-            font=FONT_TITLE
-        ).grid(row=0, column=0, sticky="w", padx=12, pady=12)
+            bg=BG_PANEL,
+            font=FONT_TITLE,
+        ).pack(anchor="w", padx=18, pady=(8, 2))
 
-        ROW_A = "#1e1e1e"
-        ROW_B = "#242424"
+        temperatures = tk.Frame(panel, bg=BG_PANEL)
+        temperatures.pack(fill="x", padx=18, pady=(0, 4))
+        for column in range(4):
+            temperatures.grid_columnconfigure(column, weight=1)
 
-        SEP_COLOR = "#2F3645"
-
-        for rid in (1,):
-            panel = tk.Frame(root, bg=BG_PANEL)
-            panel.grid(row=1, column=rid - 1, sticky="nsew", padx=10, pady=10)
-
-            # === NADPIS REGULÁTORU ===
+        for column, (title, key) in enumerate((
+            ("TUV", "heat_tuv_temp"),
+            ("AKU – horní", "heat_aku_top_temp"),
+            ("AKU – dolní", "heat_aku_temp"),
+            ("Místnost", "heat_room_temp"),
+        )):
+            box = tk.Frame(temperatures, bg=BG_TILE)
+            box.grid(row=0, column=column, sticky="nsew", padx=6)
             tk.Label(
-                panel,
-                text=f"REGULÁTOR {rid}",
+                box,
+                text=title,
+                fg=FG_LABEL,
+                bg=BG_TILE,
+                font=FONT_LABEL,
+            ).pack(pady=(4, 2))
+            value = tk.Label(
+                box,
+                text="--.- °C",
+                fg=FG_MAIN,
+                bg=BG_TILE,
+                font=FONT_VALUE,
+            )
+            value.pack(pady=(0, 4))
+            self.values[key] = value
+
+        energy = tk.Frame(panel, bg=BG_PANEL)
+        energy.pack(fill="x", padx=24, pady=(0, 4))
+        energy.grid_columnconfigure(1, weight=1)
+        energy.grid_columnconfigure(3, weight=1)
+        metrics = (
+            ("AKU průměr:", "fve_tank_average"),
+            ("Tepelná ztráta:", "fve_heat_loss"),
+            ("FVE dnes:", "fve_energy_today"),
+            ("FVE celkem:", "fve_energy_total"),
+            ("Výkon spirály (odhad):", "fve_power_estimated"),
+            ("Vydáno od nabití:", "fve_discharge_since"),
+            ("Poslední výdej:", "fve_discharge_last"),
+        )
+        for index, (label, key) in enumerate(metrics):
+            row, side = divmod(index, 2)
+            column = side * 2
+            tk.Label(energy, text=label, fg=FG_LABEL, bg=BG_PANEL,
+                     font=FONT_LABEL, anchor="w").grid(row=row, column=column, sticky="w", padx=(0, 5) if side == 0 else (12, 5), pady=1)
+            value = tk.Label(energy, text="---", fg=FG_MAIN, bg=BG_PANEL,
+                             font=FONT_VALUE, anchor="e")
+            value.grid(row=row, column=column + 1, sticky="e", pady=1)
+            self.values[key] = value
+
+        controls = tk.Frame(panel, bg=BG_PANEL)
+        controls.pack(fill="both", expand=True, padx=18, pady=2)
+        controls.grid_columnconfigure(0, weight=1)
+        controls.grid_columnconfigure(1, weight=1)
+
+        for column, (key, title) in enumerate((
+            ("tuv", "TUV"),
+            ("aku", "AKU"),
+        )):
+            button = tk.Button(
+                controls,
+                text=f"{title}\nRUČNĚ ZAPNOUT",
+                fg="white",
+                bg="#3a3a3a",
+                activeforeground="white",
+                activebackground="#555555",
+                font=("DejaVu Sans", 16, "bold"),
+                height=2,
+            )
+            button.grid(row=0, column=column, sticky="nsew", padx=6, pady=4)
+            self.heating_buttons[key] = button
+
+        status = tk.Frame(panel, bg=BG_PANEL)
+        status.pack(fill="x", padx=24, pady=(2, 2))
+        status.grid_columnconfigure(1, weight=1)
+
+        for row, (label, key) in enumerate((
+            ("Režim:", "heat_mode"),
+            ("Skutečný výstup:", "heat_active"),
+            ("Stav:", "heat_reason"),
+        )):
+            tk.Label(
+                status,
+                text=label,
+                fg=FG_LABEL,
+                bg=BG_PANEL,
+                font=FONT_LABEL,
+                anchor="w",
+            ).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=2)
+            value = tk.Label(
+                status,
+                text="---",
                 fg=FG_MAIN,
                 bg=BG_PANEL,
-                font=FONT_TITLE
-            ).pack(anchor="w", padx=12, pady=(10, 6))
+                font=FONT_VALUE,
+                anchor="w",
+            )
+            value.grid(row=row, column=1, sticky="w", pady=2)
+            self.values[key] = value
 
-            # tenká linka pod nadpisem
-            tk.Frame(panel, height=1, bg=SEP_COLOR).pack(fill="x", padx=8, pady=(0, 12))
-
-            row_idx = 0
-
-            def row(label, key, is_state=False):
-                nonlocal row_idx
-                bg = ROW_A if row_idx % 2 == 0 else ROW_B
-                row_idx += 1
-
-                r = tk.Frame(panel, bg=bg)
-                r.pack(fill="x", padx=8, pady=2)
-                r.grid_columnconfigure(1, weight=1)
-
-                tk.Label(
-                    r,
-                    text=label,
-                    fg=FG_LABEL,
-                    bg=bg,
-                    font=("DejaVu Sans", 13),
-                    width=22,
-                    anchor="w"
-                ).grid(row=0, column=0, sticky="w", padx=14)
-
-                val = tk.Label(
-                    r,
-                    text="---",
-                    fg=FG_MAIN,
-                    bg=bg,
-                    font=("DejaVu Sans", 14, "bold"),
-                    anchor="w"
-                )
-                val.grid(row=0, column=1, sticky="w", padx=(8, 14))
-
-                self.values[key] = val
-
-                if is_state:
-                    val._is_charge_state = True
-
-
-            # =====================
-            # ⚡ OKAMŽITÉ HODNOTY
-            # =====================
-            row("⚡  Napětí baterie", f"fve{rid}_batt")
-            row("☀️ Výkon panelů", f"fve{rid}_power")
-
-            tk.Frame(panel, height=1, bg=SEP_COLOR).pack(fill="x", padx=8, pady=12)
-
-            # =====================
-            # 📊 DENNÍ BILANCE
-            # =====================
-            row("📈 Vyrobeno dnes", f"fve{rid}_energy_day")
-            row("📈 Vyrobeno měsíc (kWh)", f"fve{rid}_energy_month")
-            row("📈 Vyrobeno rok (kWh)", f"fve{rid}_energy_year")
-            row("🔋 Max napětí aku (dnes)", f"fve{rid}_vmax")
-            row("🔋 Min napětí aku (dnes)", f"fve{rid}_vmin")
-
-            tk.Frame(panel, height=1, bg=SEP_COLOR).pack(fill="x", padx=8, pady=12)
-
-            # =====================
-            # 🌡 STAV
-            # =====================
-            row("🌡 Teplota regulátoru", f"fve{rid}_3111")
-            row("⚡ Stav nabíjení", f"fve{rid}_state", is_state=True)
+        auto_button = tk.Button(
+            panel,
+            text="ZPĚT DO AUTOMATICKÉHO REŽIMU",
+            fg="white",
+            bg="#315a31",
+            activeforeground="white",
+            activebackground="#427742",
+            font=FONT_VALUE,
+        )
+        auto_button.pack(fill="x", padx=24, pady=(4, 8))
+        self.heating_buttons["auto"] = auto_button
 
         # === ZPĚT ===
         tk.Button(
@@ -699,7 +741,7 @@ class DashboardLayout:
             text="ZPĚT",
             font=FONT_VALUE,
             command=lambda: self.show_view("main")
-        ).grid(row=2, column=0, pady=10)
+        ).grid(row=1, column=0, columnspan=2, pady=10)
 
 
     def _fve_value(self, parent, label, key):
@@ -842,14 +884,6 @@ class DashboardLayout:
             )
             block.pack(fill="x", padx=16, pady=(6, 10))
 
-            tk.Label(
-                block,
-                text=f"REGULÁTOR {rid}",
-                fg=FG_LABEL,
-                bg=BG_TILE,
-                font=FONT_LABEL
-            ).pack(anchor="w", pady=(0, 4))
-
             colors = [ROW_A, ROW_B]
 
             self.zebra_row(
@@ -889,9 +923,16 @@ class DashboardLayout:
 
             self.zebra_row(
                 block,
-                "Vytěžování",
-                "main_fve_load",
+                "Max. napětí baterie dnes",
+                f"main_r{rid}_vmax",
                 colors[1]
+            )
+
+            self.zebra_row(
+                block,
+                "Min. napětí baterie dnes",
+                f"main_r{rid}_vmin",
+                colors[0]
             )
 
         # === TLAČÍTKO DOLE ===
@@ -957,7 +998,7 @@ class DashboardLayout:
             fg=FG_LABEL,
             bg=bg,
             font=FONT_LABEL,
-            width=13,
+            width=24,
             anchor="w"
         ).grid(row=0, column=0, sticky="w", padx=6)
 

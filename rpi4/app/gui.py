@@ -5,19 +5,18 @@ import os
 from datetime import date
 from app.gui_style import *
 import threading
-from app.parser import parse_fve_load_frame
 
 from app.gui_layout import DashboardLayout
 
 from app.cov_logger import CovLogger, CovHistoryStore, CovPumpCycleStore
 from app.reg_logger import RegulatorLogger
-from app.parser import parse_cov_frame, parse_reg_frame
+from app.parser import parse_cov_frame, parse_reg_frame, parse_heating_frame
 from app.ds18b20 import DS18B20
+from app.fve_energy import FveEnergy
 from app.config import (
     TANK_TOP_SENSOR,
     TANK_BOTTOM_SENSOR,
     IN_SIDE_TEMP,
-    TUV_TEMP,
 )
 
 DEBUG = False
@@ -41,10 +40,15 @@ class DashboardGUI:
         self.no_data = True
         self.link_dead_since = None
         self.LINK_WATCHDOG_TIMEOUT = 30
-        self.COV_WATCHDOG_TIMEOUT = 2 * 60 * 60
+        self.COV_WATCHDOG_TIMEOUT = 30
         self.last_temp_read = 0.0
+        self.last_heating_temp_read = 0.0
+        self.HEATING_TEMP_INTERVAL = 10.0
         self.last_invalid_log_ts = 0.0
         self.last_no_data_diag_ts = 0.0
+        self.desired_heating_mode = "A"
+        self.last_heating_command_tx = 0.0
+        self.HEATING_COMMAND_INTERVAL = 2.0
         self.link_debug_log_path = "/home/milan/logs/home_as/link_debug.log"
         self._ensure_link_debug_log_dir()
 
@@ -60,10 +64,20 @@ class DashboardGUI:
 
         # --- HARDWARE ---
         self.ds = DS18B20()
+        self.state.fve_energy = FveEnergy()
 
         # --- GUI ---
         self.layout = DashboardLayout(root)
         self.values = self.layout.values
+        self.layout.heating_buttons["tuv"].config(
+            command=lambda: self.toggle_manual_heating("T")
+        )
+        self.layout.heating_buttons["aku"].config(
+            command=lambda: self.toggle_manual_heating("K")
+        )
+        self.layout.heating_buttons["auto"].config(
+            command=lambda: self.set_heating_mode("A")
+        )
 
         self.status_label = self.layout.status_label
         self.status_reason = self.layout.status_reason
@@ -132,6 +146,7 @@ class DashboardGUI:
     def io_worker(self):
         while self.io_running:
             try:
+                self.state.fve_energy.tick()
                 if self.link.ser is None:
                     self.link.connect()
                     time.sleep(1)
@@ -156,25 +171,33 @@ class DashboardGUI:
                 if block:
                     last_cov = None
                     last_reg = {}
-
-                    last_load = None
+                    last_heating = None
 
                     for line in block:
                         if line.startswith("<"):
                             last_cov = line
                         elif line.startswith("R"):
                             last_reg[line[1]] = line
-                        elif line.startswith("FVE:"):
-                            last_load = line
+                        elif line.startswith("H:"):
+                            last_heating = line
 
                     if last_cov:
                         data = parse_cov_frame(last_cov)
                         if data:
                             self.state.update_from_cov(data)
+                            self.cov_history.record_air_temperature(data.get("TO"))
                             now = time.time()
                             self.last_data_ts = now
-                            self.last_cov_data_ts = now
-                            self.cov_logger.update(self.state.monitoring)
+                            cov_age = data.get("COV_AGE")
+                            cov_fresh = cov_age is None or 0 <= cov_age <= 15
+                            if cov_age is None:
+                                self.last_cov_data_ts = now
+                            elif cov_age >= 0:
+                                self.last_cov_data_ts = now - cov_age
+                            self.cov_logger.update(
+                                self.state.monitoring,
+                                cov_fresh=cov_fresh,
+                            )
                         else:
                             self.log_invalid_frame("COV", last_cov)
 
@@ -187,23 +210,59 @@ class DashboardGUI:
                         else:
                             self.log_invalid_frame("REG", line)
 
-                    if last_load:
-                        data = parse_fve_load_frame(last_load)
+                    if last_heating:
+                        data = parse_heating_frame(last_heating)
                         if data:
-                            self.state.update_fve_load(data)
-                            self.last_data_ts = time.time() 
-                            self.reg_logger.update_load(self.state.fve_load, self.state.regulators)
+                            self.state.update_from_heating(data)
+                            heating_now = time.time()
+                            if data["END_HOUR"] is not None:
+                                self.state.fve_energy.set_charge_end_hour(data["END_HOUR"])
+                            self.state.fve_energy.observe_heating(
+                                None if data["REASON"] == "NO_DATA" else data["ACTIVE"],
+                                heating_now,
+                            )
+                            self.last_data_ts = heating_now
                         else:
-                            self.log_invalid_frame("FVE", last_load)
+                            self.log_invalid_frame("HEAT", last_heating)
 
                 # DS18B20
                 now = time.time()
+                fresh_tank_sample = False
                 if now - self.last_temp_read > 60:
                     self.last_temp_read = now
                     self.state.tank["TOP"] = self.ds.read_temp(TANK_TOP_SENSOR)
-                    self.state.tank["BOTTOM"] = self.ds.read_temp(TANK_BOTTOM_SENSOR)
                     self.state.tank["IN"] = self.ds.read_temp(IN_SIDE_TEMP)
-                    self.state.tank["TUV"] = self.ds.read_temp(TUV_TEMP)
+                    fresh_tank_sample = True
+
+                if now - self.last_heating_temp_read > self.HEATING_TEMP_INTERVAL:
+                    self.last_heating_temp_read = now
+                    self.state.tank["BOTTOM"] = self.ds.read_temp(TANK_BOTTOM_SENSOR)
+                    aku_temp = self.state.tank["BOTTOM"]
+                    if aku_temp is not None:
+                        frame = f"<TEMP:{int(round(aku_temp))}>"
+                        if self.link.write_temperature_frame(frame):
+                            self.log_link_debug(f"TEMP TX -> Pico Master: {frame}")
+                        else:
+                            self.log_link_debug(f"TEMP TX CHYBA: nelze odeslat {frame}")
+                    else:
+                        self.log_link_debug(
+                            "TEMP TX NEODESLÁNO: "
+                            f"AKU dolní={aku_temp}"
+                        )
+
+                if fresh_tank_sample:
+                    self.state.fve_energy.sample(
+                        self.state.tank["TOP"],
+                        self.state.tank["BOTTOM"],
+                        self.state.tank["IN"],
+                        time.time(),
+                    )
+
+                if now - self.last_heating_command_tx >= self.HEATING_COMMAND_INTERVAL:
+                    self.last_heating_command_tx = now
+                    frame = f"<HEAT:{self.desired_heating_mode}>"
+                    if not self.link.write_control_frame(frame):
+                        self.log_link_debug(f"HEAT TX CHYBA: nelze odeslat {frame}")
 
             except Exception as e:
                 print("IO ERROR:", e)
@@ -323,12 +382,8 @@ class DashboardGUI:
             self.set_value(f"main_r{rid}_energy_day", f"{r.energy_today:.0f} W")
             self.set_value(f"main_r{rid}_temp", f"{r.r3111:.0f} °C")
             self.set_charge_state(f"main_r{rid}_state", self.charge_text(r.charge_state))
-
-        load = self.state.fve_load
-        self.set_value("main_fve_load", "⇧ ZAPNUTO" if load == 1 else "VYPNUTO")
-        load_lbl = self.values.get("main_fve_load")
-        if load_lbl:
-            load_lbl.config(fg="#ff9800" if load == 1 else FG_MUTED)
+            self.set_value(f"main_r{rid}_vmax", f"{r.vbat_max_day:.2f} V")
+            self.set_value(f"main_r{rid}_vmin", f"{r.vbat_min_day:.2f} V")
 
         # === TEPLOTY NÁDRŽE ===
         if tank.get("TOP") is not None:
@@ -337,8 +392,10 @@ class DashboardGUI:
         if tank.get("BOTTOM") is not None:
             self.set_value("tank_bottom", f"{tank['BOTTOM']:.0f} °C")
 
-        if tank.get("TUV") is not None:
-            self.set_value("tank_tuv", f"{tank['TUV']:.0f} °C")
+        self.set_value(
+            "tank_tuv",
+            f"{tank['TUV']:.0f} °C" if tank.get("TUV") is not None else "---",
+        )
 
         if tank.get("IN") is not None:
             self.set_value("tank_in", f"{tank['IN']:.1f} °C")
@@ -370,8 +427,10 @@ class DashboardGUI:
         if tank.get("IN") is not None:
             self.set_value("tank_in", f"{tank['IN']:.1f} °C")
 
-        if tank.get("TUV") is not None:
-            self.set_value("tank_tuv", f"{tank['TUV']:.0f} °C")
+        self.set_value(
+            "tank_tuv",
+            f"{tank['TUV']:.0f} °C" if tank.get("TUV") is not None else "---",
+        )
 
     def update_system_status(self):
         m = self.state.monitoring
@@ -513,29 +572,88 @@ class DashboardGUI:
         self.refresh_cov_pump_cycles(force=self.last_cov_pump_cycles_refresh == 0.0)
         self.render_cov_pump_cycles()
 
+    def toggle_manual_heating(self, mode):
+        self.set_heating_mode("0" if self.desired_heating_mode == mode else mode)
+
+    def set_heating_mode(self, mode):
+        if mode not in ("A", "T", "K", "0"):
+            return
+        self.desired_heating_mode = mode
+        self.last_heating_command_tx = 0.0
+        self.log_link_debug(f"Požadovaný režim ohřevu: {mode}")
+
     def update_fve_view(self):
-        for rid in (1,):
-            r = self.state.regulators.get(rid)
-            if not r:
-                continue
+        tank = self.state.tank
+        heating = self.state.heating
+        energy = self.state.fve_energy
 
-            self.set_value(
-                f"fve{rid}_batt",
-                f"{self.batt_display(rid, r.batt):.2f} V"
+        tuv = tank.get("TUV")
+        aku = tank.get("BOTTOM")
+        self.set_value("heat_tuv_temp", f"{tuv:.1f} °C" if tuv is not None else "---")
+        self.set_value("heat_aku_temp", f"{aku:.1f} °C" if aku is not None else "---")
+        top = tank.get("TOP")
+        room = tank.get("IN")
+        self.set_value("heat_aku_top_temp", f"{top:.1f} °C" if top is not None else "---")
+        self.set_value("heat_room_temp", f"{room:.1f} °C" if room is not None else "---")
+        self.set_value("fve_tank_average", f"{energy.tank_average_c:.1f} °C" if energy.tank_average_c is not None else "---")
+        self.set_value("fve_heat_loss", f"{energy.heat_loss_w:.0f} W" if energy.heat_loss_w is not None else "---")
+        self.set_value("fve_energy_today", f"{energy.energy_today_kwh:.3f} kWh")
+        self.set_value("fve_energy_total", f"{energy.energy_total_kwh:.3f} kWh")
+        self.set_value("fve_power_estimated", f"{energy.power_fve_estimated_w:.0f} W")
+        self.set_value("fve_discharge_since", f"{energy.energy_since_last_charge_kwh:.3f} kWh")
+        self.set_value("fve_discharge_last", f"{energy.last_discharge_energy_kwh:.3f} kWh")
+
+        mode_text = {
+            "A": "AUTOMATICKÝ",
+            "T": "RUČNĚ TUV",
+            "K": "RUČNĚ AKU",
+            "0": "RUČNĚ VYPNUTO",
+        }.get(heating["MODE"], "NEZNÁMÝ")
+        active_text = {
+            "T": "OHŘEV TUV ZAPNUT",
+            "K": "OHŘEV AKU ZAPNUT",
+            "0": "VYPNUTO",
+        }.get(heating["ACTIVE"], "NEZNÁMÝ")
+        reason_text = {
+            "AUTO": "ŘÍZENO TEPLOTOU",
+            "MANUAL": "RUČNÍ OHŘEV AKTIVNÍ",
+            "OFF": "RUČNĚ VYPNUTO",
+            "MAX_TUV": "TUV DOSÁHLA MAXIMA 50 °C",
+            "MAX_AKU": "AKU DOSÁHLA MAXIMA 75 °C",
+            "NO_TEMP": "CHYBÍ PLATNÁ TEPLOTA",
+            "NO_TIME": "CHYBÍ PLATNÝ ČAS",
+            "OUTSIDE": "MIMO ČASOVÉ OKNO",
+            "TIMEOUT": "RUČNÍ POVEL VYPRŠEL",
+            "NO_DATA": "BEZ ZPĚTNÉHO STAVU",
+            "START": "SPOUŠTĚNÍ",
+        }.get(heating["REASON"], heating["REASON"])
+
+        self.set_value("heat_mode", mode_text)
+        self.set_value("heat_active", active_text)
+        self.set_value("heat_reason", reason_text)
+
+        actual_mode = heating["MODE"]
+        active = heating["ACTIVE"]
+        for key, code, title, temperature, maximum in (
+            ("tuv", "T", "TUV", tuv, 50.0),
+            ("aku", "K", "AKU", aku, 75.0),
+        ):
+            selected = actual_mode == code
+            can_start = temperature is not None and temperature < maximum
+            button = self.layout.heating_buttons[key]
+            button.config(
+                text=(
+                    f"{title}\nRUČNĚ VYPNOUT"
+                    if selected
+                    else f"{title}\nRUČNĚ ZAPNOUT"
+                ),
+                bg="#b56a18" if selected and active == code else "#7a2929" if selected else "#3a3a3a",
+                state="normal" if selected or can_start else "disabled",
             )
 
-            self.set_value(f"fve{rid}_power",  f"{r.power:.0f} W")
-            self.set_value(f"fve{rid}_energy_day", f"{r.energy_today:.0f} W")
-            self.set_value(f"fve{rid}_energy_month", f"{r.energy_month / 1000.0:.2f} kWh")
-            self.set_value(f"fve{rid}_energy_year", f"{r.energy_year / 1000.0:.2f} kWh")
-            self.set_value(f"fve{rid}_vmax",   f"{r.vbat_max_day:.2f} V")
-            self.set_value(f"fve{rid}_vmin",   f"{r.vbat_min_day:.2f} V")
-            self.set_value(f"fve{rid}_3111",   f"{r.r3111:.0f} °C")
-            self.set_charge_state(
-                f"fve{rid}_state",
-                self.charge_text(r.charge_state)
-            )
-
+        self.layout.heating_buttons["auto"].config(
+            bg="#2e7d32" if actual_mode == "A" else "#315a31"
+        )
 
     # =====================================================
     # POMOCNÉ
@@ -791,6 +909,8 @@ class DashboardGUI:
 
     def shutdown(self):
         self.io_running = False
+        self.io_thread.join(timeout=2)
+        self.state.fve_energy.close()
         self.root.destroy()
 
 
