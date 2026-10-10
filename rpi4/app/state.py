@@ -126,6 +126,8 @@ class SystemState:
             "TUV": None,    # TUV
         }
 
+        self.pump = {"MODE": None, "ACTIVE": None}
+
         self.heating = {
             "MODE": "A",
             "ACTIVE": "0",

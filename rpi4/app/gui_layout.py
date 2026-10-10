@@ -659,9 +659,6 @@ class DashboardLayout:
             ("Tepelná ztráta:", "fve_heat_loss"),
             ("FVE dnes:", "fve_energy_today"),
             ("FVE celkem:", "fve_energy_total"),
-            ("Výkon spirály (odhad):", "fve_power_estimated"),
-            ("Vydáno od nabití:", "fve_discharge_since"),
-            ("Poslední výdej:", "fve_discharge_last"),
         )
         for index, (label, key) in enumerate(metrics):
             row, side = divmod(index, 2)
@@ -694,6 +691,21 @@ class DashboardLayout:
             )
             button.grid(row=0, column=column, sticky="nsew", padx=6, pady=4)
             self.heating_buttons[key] = button
+
+        pump_row = tk.Frame(panel, bg=BG_PANEL)
+        pump_row.pack(fill="x", padx=24, pady=4)
+        self.pump_button = tk.Button(
+            pump_row, text="ČERPADLO – RUČNĚ ZAPNOUT", font=FONT_LABEL,
+            fg="white", bg="#3a3a3a", activeforeground="white",
+            activebackground="#555555", state="disabled", pady=8,
+        )
+        self.pump_button.pack(side="left")
+        pump_status = tk.Label(
+            pump_row, text="BEZ ZPĚTNÉHO STAVU", fg=FG_MAIN,
+            bg=BG_PANEL, font=FONT_LABEL, anchor="e",
+        )
+        pump_status.pack(side="right", padx=(10, 0))
+        self.values["pump_status"] = pump_status
 
         status = tk.Frame(panel, bg=BG_PANEL)
         status.pack(fill="x", padx=24, pady=(2, 2))

@@ -6,7 +6,7 @@ from modbus_ep import read_regulator
 from mega_protocol import poll_commands, send_frame
 from ds18b20_sensor import DS18B20Sensor
 from ds3231 import DS3231
-from heating_control import HeatingController, HysteresisRelay, RelayOutput
+from heating_control import HeatingController, PumpController, RelayOutput
 
 outdoor_temp = None
 last_tuv_temp_read = time.ticks_ms() - TUV_TEMP_READ_INTERVAL_MS
@@ -15,6 +15,8 @@ last_sensor_diag = time.ticks_ms() - 60000
 last_outdoor_temp_send = time.ticks_ms() - OUTDOOR_TEMP_SEND_INTERVAL_MS
 tuv_temp = None
 aku_temp = None
+pump_average_temp = None
+last_pump_temperature_received = None
 last_tuv_valid = None
 last_aku_received = None
 
@@ -42,10 +44,11 @@ heating = HeatingController(
     RELAY_SWITCH_DELAY_MS,
     MANUAL_COMMAND_TIMEOUT_MS,
 )
-aku_pump = HysteresisRelay(
+aku_pump = PumpController(
     RelayOutput(Pin(AKU_PUMP_RELAY_PIN, Pin.OUT), AKU_PUMP_RELAY_ACTIVE_HIGH),
     AKU_PUMP_ON_C,
     AKU_PUMP_OFF_C,
+    PUMP_COMMAND_TIMEOUT_MS,
 )
 
 
@@ -60,6 +63,18 @@ def handle_heating_mode(mode):
     now = time.ticks_ms()
     if heating.set_mode(mode, now):
         print("OHŘEV RX z Pico Masteru: režim={}".format(mode))
+
+
+def handle_pump_temperature(average_c):
+    global pump_average_temp, last_pump_temperature_received
+    # Chybějící měření nesmí smazat poslední platný průměr ani obnovit jeho stáří.
+    if average_c is not None:
+        pump_average_temp = average_c
+        last_pump_temperature_received = time.ticks_ms()
+
+
+def handle_pump_mode(mode):
+    aku_pump.set_mode(mode, time.ticks_ms())
 
 
 # ================= Časování ================
@@ -82,6 +97,8 @@ while True:
         poll_commands(
             on_temperature=handle_temperature,
             on_heating_mode=handle_heating_mode,
+            on_pump_mode=handle_pump_mode,
+            on_pump_temperature=handle_pump_temperature,
         )
         now = time.ticks_ms()
         if time.ticks_diff(now, last_outdoor_temp_read) >= OUTDOOR_TEMP_READ_INTERVAL_MS:
@@ -120,13 +137,20 @@ while True:
             tuv_temp if tuv_fresh else None,
             aku_temp if aku_fresh else None,
         )
+        pump_temperature_fresh = (
+            last_pump_temperature_received is not None
+            and time.ticks_diff(now, last_pump_temperature_received) <= TEMPERATURE_TIMEOUT_MS
+        )
         pump_time_allowed = heating.is_in_window(rtc_time)
         aku_pump.update(
-            aku_temp if aku_fresh and pump_time_allowed else None
+            now, pump_average_temp if pump_temperature_fresh else None, pump_time_allowed
         )
 
         if time.ticks_diff(now, last_heating_status_send) >= HEATING_STATUS_INTERVAL_MS:
             last_heating_status_send = now
+            send_frame("<PUMP:{},{}>".format(
+                aku_pump.mode, int(aku_pump.relay.is_on)
+            ))
             heat = heating.diagnostics(now)
             active_code = {
                 heating.TUV: "T",
@@ -220,10 +244,11 @@ while True:
                 )
             )
             print(
-                "ČERPADLO AKU: {} (časové okno={}; AKU {} C; sepne od {} C, vypne při {} C)".format(
+                "ČERPADLO AKU: {} (režim={}; časové okno={}; AKU průměr {} C; sepne od {} C, vypne při {} C)".format(
                     "ZAP" if aku_pump.relay.is_on else "VYP",
+                    aku_pump.mode,
                     "ANO" if pump_time_allowed else "NE",
-                    aku_temp if aku_fresh else "neplatná teplota",
+                    pump_average_temp if pump_temperature_fresh else "neplatná teplota",
                     AKU_PUMP_ON_C,
                     AKU_PUMP_OFF_C,
                 )

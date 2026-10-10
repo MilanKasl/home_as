@@ -35,6 +35,47 @@ class HysteresisRelay:
         return self.relay.is_on
 
 
+class PumpController:
+    """Ruční běh s časovým limitem, nezávislý na automatické hysterezi."""
+
+    def __init__(self, relay, on_temperature_c, off_temperature_c, timeout_ms):
+        self.relay = relay
+        self.on_temperature_c = on_temperature_c
+        self.off_temperature_c = off_temperature_c
+        self.timeout_ms = timeout_ms
+        self.mode = "A"
+        self.last_manual_command = None
+        self.automatic_on = False
+
+    def set_mode(self, mode, now_ms):
+        if mode not in ("A", "M"):
+            return False
+        self.mode = mode
+        self.last_manual_command = now_ms if mode == "M" else None
+        return True
+
+    def update(self, now_ms, temperature_c, time_allowed):
+        if not time_allowed or temperature_c is None:
+            self.automatic_on = False
+        elif temperature_c >= self.on_temperature_c:
+            self.automatic_on = True
+        elif temperature_c <= self.off_temperature_c:
+            self.automatic_on = False
+
+        if self.mode == "M" and (
+            self.last_manual_command is None
+            or time.ticks_diff(now_ms, self.last_manual_command) >= self.timeout_ms
+        ):
+            self.mode = "A"
+            self.last_manual_command = None
+
+        if self.mode == "M" or self.automatic_on:
+            self.relay.on()
+        else:
+            self.relay.off()
+        return self.relay.is_on
+
+
 class HeatingController:
     """Vzájemně blokované relé TUV a akumulační nádrže s hysterezí."""
 

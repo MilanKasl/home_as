@@ -10,9 +10,10 @@ from app.gui_layout import DashboardLayout
 
 from app.cov_logger import CovLogger, CovHistoryStore, CovPumpCycleStore
 from app.reg_logger import RegulatorLogger
-from app.parser import parse_cov_frame, parse_reg_frame, parse_heating_frame
+from app.parser import parse_cov_frame, parse_reg_frame, parse_heating_frame, parse_pump_frame
 from app.ds18b20 import DS18B20
 from app.fve_energy import FveEnergy
+from app.pump_control import pump_temperature_frame
 from app.config import (
     TANK_TOP_SENSOR,
     TANK_BOTTOM_SENSOR,
@@ -49,6 +50,15 @@ class DashboardGUI:
         self.desired_heating_mode = "A"
         self.last_heating_command_tx = 0.0
         self.HEATING_COMMAND_INTERVAL = 2.0
+        self.desired_pump_mode = "A"
+        self.last_pump_command_tx = 0.0
+        self.pending_pump_temperature = None
+        self.last_pump_status_ts = None
+        self.PUMP_COMMAND_INTERVAL = 2.0
+        self.PUMP_STATUS_TIMEOUT = 3.0
+        self.CONTROL_LOSS_TIMEOUT = 40 * 60
+        self.last_pump_contact_ts = None
+        self.last_heating_contact_ts = None
         self.link_debug_log_path = "/home/milan/logs/home_as/link_debug.log"
         self._ensure_link_debug_log_dir()
 
@@ -78,6 +88,8 @@ class DashboardGUI:
         self.layout.heating_buttons["auto"].config(
             command=lambda: self.set_heating_mode("A")
         )
+
+        self.layout.pump_button.config(command=self.toggle_manual_pump)
 
         self.status_label = self.layout.status_label
         self.status_reason = self.layout.status_reason
@@ -146,6 +158,7 @@ class DashboardGUI:
     def io_worker(self):
         while self.io_running:
             try:
+                self.expire_manual_requests()
                 self.state.fve_energy.tick()
                 if self.link.ser is None:
                     self.link.connect()
@@ -172,12 +185,15 @@ class DashboardGUI:
                     last_cov = None
                     last_reg = {}
                     last_heating = None
+                    last_pump = None
 
                     for line in block:
                         if line.startswith("<"):
                             last_cov = line
                         elif line.startswith("R"):
                             last_reg[line[1]] = line
+                        elif line.startswith("P:"):
+                            last_pump = line
                         elif line.startswith("H:"):
                             last_heating = line
 
@@ -210,13 +226,23 @@ class DashboardGUI:
                         else:
                             self.log_invalid_frame("REG", line)
 
+                    if last_pump:
+                        data = parse_pump_frame(last_pump)
+                        if data is not None:
+                            self.state.pump = data
+                            self.last_pump_status_ts = time.monotonic()
+                            if data["MODE"] is not None:
+                                self.last_pump_contact_ts = self.last_pump_status_ts
+                        else:
+                            self.log_invalid_frame("PUMP", last_pump)
+
                     if last_heating:
                         data = parse_heating_frame(last_heating)
                         if data:
                             self.state.update_from_heating(data)
+                            if data["REASON"] != "NO_DATA":
+                                self.last_heating_contact_ts = time.monotonic()
                             heating_now = time.time()
-                            if data["END_HOUR"] is not None:
-                                self.state.fve_energy.set_charge_end_hour(data["END_HOUR"])
                             self.state.fve_energy.observe_heating(
                                 None if data["REASON"] == "NO_DATA" else data["ACTIVE"],
                                 heating_now,
@@ -230,13 +256,16 @@ class DashboardGUI:
                 fresh_tank_sample = False
                 if now - self.last_temp_read > 60:
                     self.last_temp_read = now
-                    self.state.tank["TOP"] = self.ds.read_temp(TANK_TOP_SENSOR)
                     self.state.tank["IN"] = self.ds.read_temp(IN_SIDE_TEMP)
                     fresh_tank_sample = True
 
                 if now - self.last_heating_temp_read > self.HEATING_TEMP_INTERVAL:
                     self.last_heating_temp_read = now
+                    self.state.tank["TOP"] = self.ds.read_temp(TANK_TOP_SENSOR)
                     self.state.tank["BOTTOM"] = self.ds.read_temp(TANK_BOTTOM_SENSOR)
+                    self.pending_pump_temperature = pump_temperature_frame(
+                        self.state.tank["TOP"], self.state.tank["BOTTOM"]
+                    )
                     aku_temp = self.state.tank["BOTTOM"]
                     if aku_temp is not None:
                         frame = f"<TEMP:{int(round(aku_temp))}>"
@@ -263,6 +292,16 @@ class DashboardGUI:
                     frame = f"<HEAT:{self.desired_heating_mode}>"
                     if not self.link.write_control_frame(frame):
                         self.log_link_debug(f"HEAT TX CHYBA: nelze odeslat {frame}")
+                elif now - self.last_pump_command_tx >= self.PUMP_COMMAND_INTERVAL:
+                    # Další průchod smyčkou oddělí krátké povely pro PIO přijímač.
+                    self.last_pump_command_tx = now
+                    frame = f"<PUMP:{self.desired_pump_mode}>"
+                    if not self.link.write_control_frame(frame):
+                        self.log_link_debug(f"PUMP TX CHYBA: nelze odeslat {frame}")
+                elif self.pending_pump_temperature is not None:
+                    # Samostatný průchod ponechá PIO přijímači čas zpracovat povely.
+                    if self.link.write_temperature_frame(self.pending_pump_temperature):
+                        self.pending_pump_temperature = None
 
             except Exception as e:
                 print("IO ERROR:", e)
@@ -485,6 +524,7 @@ class DashboardGUI:
         # 3️⃣ SBĚR CHYB ČOV
         # =================================================
         reasons = []
+        notices = []
 
         # --- ČERPADLA ---
         if m.error_pump1:
@@ -493,12 +533,12 @@ class DashboardGUI:
         if m.error_pump2:
             reasons.append("PORUCHA ČERPADLA 2/PLOVÁK 4")
 
-        # --- PLOVÁKY (PORUCHOVÉ) ---
+        # --- PROVOZNÍ HLADINY A PORUCHOVÝ PLOVÁK ---
         if m.float1:
-            reasons.append("PLOVÁK 1 – PORUCHA")
+            notices.append("PLOVÁK 1 SEPNUTÝ – MINIMÁLNÍ HLADINA, ČERPÁNÍ BLOKOVÁNO")
 
         if m.float2:
-            reasons.append("PLOVÁK 2 – PORUCHA")
+            notices.append("PLOVÁK 2 SEPNUTÝ – NÁDRŽ PLNÁ")
 
         if m.float3:
             reasons.append("PLOVÁK 3 – PORUCHA")
@@ -509,7 +549,7 @@ class DashboardGUI:
         # 4️⃣ VÝSLEDNÝ STAV
         # =================================================
         if reasons:
-            reason_text = " | ".join(reasons)
+            reason_text = " | ".join(reasons + notices)
 
             self.status_label.config(
                 text="STAV: ERROR",
@@ -538,13 +578,14 @@ class DashboardGUI:
                 fg="black"
             )
 
-            self.status_reason.config(text="")
+            notice_text = " | ".join(notices)
+            self.status_reason.config(text=notice_text, fg=GREEN_OK)
 
             if "cov_status" in self.values:
                 self.values["cov_status"].config(text="OK")
 
             if "cov_reason" in self.values:
-                self.values["cov_reason"].config(text="")
+                self.values["cov_reason"].config(text=notice_text, fg=GREEN_OK)
 
     def update_cov_view(self):
         m = self.state.monitoring
@@ -579,8 +620,41 @@ class DashboardGUI:
         if mode not in ("A", "T", "K", "0"):
             return
         self.desired_heating_mode = mode
+        self.last_heating_contact_ts = time.monotonic()
         self.last_heating_command_tx = 0.0
         self.log_link_debug(f"Požadovaný režim ohřevu: {mode}")
+
+    def expire_manual_requests(self):
+        now = time.monotonic()
+        if (self.desired_pump_mode == "M" and self.last_pump_contact_ts is not None
+                and now - self.last_pump_contact_ts >= self.CONTROL_LOSS_TIMEOUT):
+            self.desired_pump_mode = "A"
+            self.last_pump_command_tx = 0.0
+        if (self.desired_heating_mode in ("T", "K")
+                and self.last_heating_contact_ts is not None
+                and now - self.last_heating_contact_ts >= self.CONTROL_LOSS_TIMEOUT):
+            self.desired_heating_mode = "0"
+            self.last_heating_command_tx = 0.0
+
+    def pump_status_fresh(self):
+        return (
+            self.last_pump_status_ts is not None
+            and time.monotonic() - self.last_pump_status_ts <= self.PUMP_STATUS_TIMEOUT
+            and self.state.pump["MODE"] is not None
+            and self.link.ser is not None
+        )
+
+    def toggle_manual_pump(self):
+        if self.desired_pump_mode == "M":
+            self.desired_pump_mode = "A"
+        elif self.pump_status_fresh():
+            self.desired_pump_mode = "M"
+        else:
+            return
+        self.last_pump_command_tx = 0.0
+        self.last_pump_contact_ts = time.monotonic()
+        self.log_link_debug(f"Požadovaný režim čerpadla: {self.desired_pump_mode}")
+        self.update_fve_view()
 
     def update_fve_view(self):
         tank = self.state.tank
@@ -599,9 +673,23 @@ class DashboardGUI:
         self.set_value("fve_heat_loss", f"{energy.heat_loss_w:.0f} W" if energy.heat_loss_w is not None else "---")
         self.set_value("fve_energy_today", f"{energy.energy_today_kwh:.3f} kWh")
         self.set_value("fve_energy_total", f"{energy.energy_total_kwh:.3f} kWh")
-        self.set_value("fve_power_estimated", f"{energy.power_fve_estimated_w:.0f} W")
-        self.set_value("fve_discharge_since", f"{energy.energy_since_last_charge_kwh:.3f} kWh")
-        self.set_value("fve_discharge_last", f"{energy.last_discharge_energy_kwh:.3f} kWh")
+
+        pump_fresh = self.pump_status_fresh()
+        pump = self.state.pump
+        if pump_fresh:
+            pump_text = "ZAPNUTO" if pump["ACTIVE"] else "VYPNUTO"
+            pump_text += " · RUČNĚ" if pump["MODE"] == "M" else " · AUTO"
+            if pump["MODE"] != self.desired_pump_mode:
+                pump_text += " · ČEKÁM"
+        else:
+            pump_text = "BEZ ZPĚTNÉHO STAVU"
+        self.set_value("pump_status", pump_text)
+        manual_pump = self.desired_pump_mode == "M"
+        self.layout.pump_button.config(
+            text="ČERPADLO – ZPĚT NA AUTO" if manual_pump else "ČERPADLO – RUČNĚ ZAPNOUT",
+            bg="#b56a18" if pump_fresh and pump["MODE"] == "M" else "#3a3a3a",
+            state="normal" if pump_fresh or manual_pump else "disabled",
+        )
 
         mode_text = {
             "A": "AUTOMATICKÝ",

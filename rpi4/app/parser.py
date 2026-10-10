@@ -102,3 +102,14 @@ def parse_heating_frame(line: str):
         }
     except (TypeError, ValueError):
         return None
+
+
+def parse_pump_frame(line: str):
+    if line == "P:NO_DATA":
+        return {"MODE": None, "ACTIVE": None}
+    if not line.startswith("P:"):
+        return None
+    parts = line[2:].split(",")
+    if len(parts) != 2 or parts[0] not in ("A", "M") or parts[1] not in ("0", "1"):
+        return None
+    return {"MODE": parts[0], "ACTIVE": int(parts[1])}

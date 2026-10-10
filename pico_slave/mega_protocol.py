@@ -8,8 +8,9 @@ _buffer = ""
 _MAX_BUFFER = 128
 
 
-def poll_commands(on_temperature=None, on_heating_mode=None):
-    """Přečte teploty a povely ohřevu od Pico Masteru."""
+def poll_commands(on_temperature=None, on_heating_mode=None, on_pump_mode=None,
+                  on_pump_temperature=None):
+    """Přečte teploty a povely ohřevu i čerpadla od Pico Masteru."""
     global _buffer
 
     while uart_out.any():
@@ -41,6 +42,19 @@ def poll_commands(on_temperature=None, on_heating_mode=None):
                             on_temperature(aku_c)
                 except (ValueError, TypeError):
                     pass
+            elif frame.startswith("PTEMP:"):
+                try:
+                    value = frame[6:]
+                    average = float(value) if value else None
+                    if average is None or -55 <= average <= 125:
+                        if on_pump_temperature:
+                            on_pump_temperature(average)
+                except (ValueError, TypeError):
+                    pass
+            elif frame.startswith("PUMP:"):
+                mode = frame[5:].strip().upper()
+                if mode in ("A", "M") and on_pump_mode:
+                    on_pump_mode(mode)
             elif frame.startswith("HEAT:"):
                 mode = frame[5:].strip().upper()
                 if mode in ("A", "T", "K", "0") and on_heating_mode:

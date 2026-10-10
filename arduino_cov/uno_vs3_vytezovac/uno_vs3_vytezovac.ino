@@ -32,7 +32,7 @@ const int ONEWIRE_PIN = 3;
 
 // ==== Konstanty ====
 const unsigned long PUMP2_LOW_MODE_MS = 50000;    // doladit podle reálně odčerpaného objemu
-const unsigned long PUMP2_HIGH_MODE_MS = 100000;  // 60s = cca 13L
+const unsigned long PUMP2_HIGH_MODE_MS = 90000;  // 60s = cca 13L
 const unsigned long FLOAT3_STOP_DELAY_MS = 2000;  // plovák 3 musí být sepnutý stabilně
 const unsigned long FLOAT4_STOP_DELAY_MS = 10000; // plovák 4 musí být sepnutý stabilně
 const unsigned long FLOAT_DEBOUNCE_MS = 500;      // potlačení zákmitů plováků 1–3; plovák 4 bez filtru
@@ -41,6 +41,7 @@ const int EEPROM_MODE_ADDR = 0;
 const byte FLOAT_PINS[4] = {FLOAT_1, FLOAT_2, FLOAT_3, FLOAT_4};
 bool floatClosed[4] = {false, false, false, false};
 bool floatCandidate[4] = {false, false, false, false};
+bool floatReady[4] = {false, false, false, false};
 unsigned long floatCandidateSince[4] = {0, 0, 0, 0};
 
 const byte PUMP_CYCLE_COUNT = 5;
@@ -81,7 +82,7 @@ unsigned long pump1StopTime = 0;
 bool manualPump1 = false;
 bool lastPumpState = false; // true = aspoň jedno čerpadlo běží
 unsigned long pump1_startTime = 0;
-const unsigned long PUMP1_TIMEOUT = 160000; // limit běhu čerpadla
+const unsigned long PUMP1_TIMEOUT = 200000; // limit běhu čerpadla
 enum PumpSequence { IDLE, PUMP2_RUNNING, PUMP1_WAITING };
 PumpSequence pumpSeq = IDLE;
 unsigned long pump2_runMs = PUMP2_LOW_MODE_MS;
@@ -126,6 +127,9 @@ void rs485Write(const char *msg) {
 
 uint8_t loadSavedMode() {
   byte saved = EEPROM.read(EEPROM_MODE_ADDR);
+  Serial.print(F("Rezim v EEPROM pri startu: "));
+  Serial.println(saved);
+  if (saved > 1) Serial.println(F("Neplatny rezim v EEPROM, vychozi mensi objem."));
   return saved == 1 ? 1 : 0;
 }
 
@@ -142,6 +146,7 @@ void initFloatInputs() {
     floatClosed[i] = closed;
     floatCandidate[i] = closed;
     floatCandidateSince[i] = now;
+    floatReady[i] = (FLOAT_PINS[i] == FLOAT_4);
   }
 }
 
@@ -153,15 +158,16 @@ void updateFloatInputs(unsigned long now) {
       floatClosed[i] = candidate;
       floatCandidate[i] = candidate;
       floatCandidateSince[i] = now;
+      floatReady[i] = true;
       continue;
     }
     if (candidate != floatCandidate[i]) {
       floatCandidate[i] = candidate;
       floatCandidateSince[i] = now;
     }
-    else if (candidate != floatClosed[i] &&
-             now - floatCandidateSince[i] >= FLOAT_DEBOUNCE_MS) {
+    else if (now - floatCandidateSince[i] >= FLOAT_DEBOUNCE_MS) {
       floatClosed[i] = candidate;
+      floatReady[i] = true;
     }
   }
 }
@@ -206,8 +212,13 @@ bool pumpFaultActive() {
   return error_pump1 || error_pump2;
 }
 
+bool pumpLevelBlocked() {
+  // Po restartu nejprve potvrdíme vstupy. Minimum blokuje celý cyklus.
+  return !floatReady[0] || !floatReady[1] || !floatReady[2] || isFloatClosed(0);
+}
+
 void startPumpFromSettler() {
-  if (pump1_active || pumpFaultActive()) return;
+  if (pump1_active || pumpFaultActive() || pumpLevelBlocked()) return;
   pump1_active = true;
   pump1_startTime = millis();
   pump1StopTime = 0; // jistota, že je resetován
@@ -217,7 +228,7 @@ void startPumpFromSettler() {
 
 
 void startPumpOutBio(unsigned long runMs) {
-  if (pump2_active || pumpFaultActive()) return;
+  if (pump2_active || pumpFaultActive() || pumpLevelBlocked()) return;
   //pauseAir();
   pump2_runMs = runMs;
   pump2_startTime = millis();
@@ -234,7 +245,7 @@ void startPumpOutBio(unsigned long runMs) {
 }
 
 void updatePumpSequence() {
-  if (pumpFaultActive()) {
+  if (pumpFaultActive() || pumpLevelBlocked()) {
     pumpSeq = IDLE;
     return;
   }
@@ -255,6 +266,21 @@ void updatePumpSequence() {
 }
 
 void updatePumps() {
+  if (pumpLevelBlocked()) {
+    if (pump1_active || pump2_active || pumpSeq != IDLE) {
+      Serial.println(F("Cerpaci cyklus zastaven: minimum hladiny nebo nepotvrzene vstupy."));
+    }
+    digitalWrite(PUMP1_PIN, LOW);
+    digitalWrite(PUMP2_PIN, LOW);
+    pump1_active = false;
+    pump2_active = false;
+    pump1StopTime = 0;
+    pump1_startTime = 0;
+    pump2Float3LowSince = 0;
+    pumpSeq = IDLE;
+    // Provozní blokování není porucha čerpadla a nevyžaduje reset.
+    return;
+  }
   // Pump 1
   if (pump1_active) {
     bool float4StableClosed = false;
@@ -350,6 +376,11 @@ void syncModeBeforePumpCycle() {
 
 void runCycle() {
   syncModeBeforePumpCycle();
+
+  if (pumpLevelBlocked()) {
+    Serial.println(F("runCycle: minimum hladiny nebo nepotvrzene vstupy, cyklus preskocen."));
+    return;
+  }
 
   if (pumpFaultActive()) {
     Serial.println(F("runCycle: porucha cerpadla/plovaku 4, cerpani blokovano do resetu."));
@@ -465,17 +496,20 @@ void applyMode() {
 }
 
 uint8_t readModeFromFloats() {
-  // Plovák 2 má prioritu: při vysoké hladině se přepne na větší objem.
-  if (isFloatClosed(1)) {
+  // První čtení po restartu nesmí přepsat režim uložený v EEPROM.
+  if (!floatReady[0] || !floatReady[1]) return modeIndex;
+
+  // Horní mez nastaví velký objem; dolní mez nastaví malý objem.
+  if (!isFloatClosed(0) && isFloatClosed(1)) {
     return 1;
   }
 
   // Plovák 1 je dolní mez: při nízké hladině se přepne na menší objem.
-  if (isFloatClosed(0)) {
+  if (isFloatClosed(0) && !isFloatClosed(1)) {
     return 0;
   }
 
-  // Mezi plováky držíme poslední režim, aby mód nepřeskakoval hned po rozepnutí plováku.
+  // Mezi mezemi (i při obou sepnutých vstupech) držíme poslední režim.
   return modeIndex;
 }
 
@@ -563,7 +597,6 @@ void setup() {
   pinMode(FLOAT_2, INPUT_PULLUP);
   pinMode(FLOAT_3, INPUT_PULLUP);
   pinMode(FLOAT_4, INPUT_PULLUP);
-  initFloatInputs();
 
   pinMode(RS485_DIR, OUTPUT);
   digitalWrite(RS485_DIR, LOW); // výchozí příjem
@@ -612,10 +645,11 @@ void setup() {
   modes[1].airOffMs     = 30UL * 60UL * 1000UL;
 
   modeIndex = loadSavedMode();
-  modeIndex = readModeFromFloats();
   lastModeCandidate = modeIndex;
 
   applyMode();
+  // Filtrace začíná až po inicializaci periferií, těsně před hlavní smyčkou.
+  initFloatInputs();
 
   // Když se hlavní smyčka opravdu zasekne, AVR watchdog provede bezpečný restart.
   // Běžný průchod loopem ho krmí na konci smyčky.
@@ -709,7 +743,7 @@ void loop() {
           !cycleRunToday[i]) {
         runCycle();               // spuštění čerpadel
         cycleRunToday[i] = true;  // tento čas už byl dnes proveden
-        Serial.print(F("Čerpadla spuštěna v "));
+        Serial.print(F("Kontrola planovaneho cerpaciho cyklu v "));
         print2Digits(PUMP_CYCLE_HOURS[i]);
         Serial.print(':');
         print2Digits(PUMP_CYCLE_MINUTES[i]);

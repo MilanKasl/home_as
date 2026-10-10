@@ -5,7 +5,7 @@ import time
 
 from state import SystemState
 from rs485 import read_uart
-from parser import parse_cov, parse_reg, parse_outdoor, parse_heating
+from parser import parse_cov, parse_reg, parse_outdoor, parse_heating, parse_pump
 from machine import WDT
 from pio_uart_tx import PIOUARTRx, PIOUARTTx
 
@@ -38,6 +38,7 @@ buf_fve = ""
 last_send = time.ticks_ms()
 last_cov_rx = None
 last_heating_rx = None
+last_pump_rx = None
 host_uart = PIOUARTTx(sm_id=0, pin_num=HOST_UART_TX_PIN, baudrate=HOST_UART_BAUDRATE)
 host_uart_rx = PIOUARTRx(sm_id=1, pin_num=HOST_UART_RX_PIN, baudrate=HOST_UART_BAUDRATE)
 host_rx_buffer = ""
@@ -51,7 +52,7 @@ def write_host_lines(lines):
 
 
 def forward_host_commands():
-    """Předá platné teploty a povely ohřevu z RPi4 do Pico Slave."""
+    """Předá teploty a povely ohřevu i čerpadla z RPi4 do Pico Slave."""
     global host_rx_buffer, last_host_rx_debug
 
     chunk = host_uart_rx.read()
@@ -96,6 +97,21 @@ def forward_host_commands():
                     print("HOST RX: teploty mimo povolený rozsah:", frame)
             except (ValueError, TypeError):
                 print("HOST RX: neplatný teplotní rámec:", frame)
+        elif frame.startswith("PTEMP:"):
+            try:
+                value = frame[6:]
+                if not value:
+                    uart_fve.write("<PTEMP:>")
+                else:
+                    average = float(value)
+                    if -55 <= average <= 125:
+                        uart_fve.write("<PTEMP:{:.3f}>".format(average))
+            except (ValueError, TypeError):
+                pass
+        elif frame.startswith("PUMP:"):
+            mode = frame[5:].strip().upper()
+            if mode in ("A", "M"):
+                uart_fve.write("<PUMP:{}>".format(mode))
         elif frame.startswith("HEAT:"):
             mode = frame[5:].strip().upper()
             if mode in ("A", "T", "K", "0"):
@@ -123,6 +139,8 @@ while True:
         if frame:
             if parse_heating(frame, state):
                 last_heating_rx = time.ticks_ms()
+            elif parse_pump(frame, state):
+                last_pump_rx = time.ticks_ms()
             elif not parse_outdoor(frame, state):
                 parse_reg(frame, state)
 
@@ -169,6 +187,12 @@ while True:
                 if heating_fresh and state.heating["TUV_TEMP"] is not None else "",
             ))
 
+            pump_fresh = (
+                last_pump_rx is not None
+                and time.ticks_diff(time.ticks_ms(), last_pump_rx) <= 3000
+            )
+            out.append("P:{},{}".format(state.pump["MODE"], state.pump["ACTIVE"])
+                       if pump_fresh else "P:NO_DATA")
             write_host_lines(out)
 
     except Exception:

@@ -23,6 +23,4 @@ FVE_ENERGY_SAVE_INTERVAL_S = 300
 FVE_MAX_SAMPLE_GAP_S = 3600  # krátký výpadek čidel nesmí zahodit teplotní nárůst
 FVE_MAX_TEMPERATURE_STEP_C = 3.0
 FVE_MAX_ESTIMATED_POWER_W = 10000.0
-FVE_POWER_WINDOW_S = 600
-FVE_CHARGE_END_HOUR_FALLBACK = 17  # pro starší firmware bez hodiny v H rámci
-FVE_HEATING_STATUS_GAP_S = 90  # tolerovaná mezera zpráv při potvrzování cyklu
+FVE_HEATING_STATUS_GAP_S = 90  # tolerovaná mezera zpráv o stavu ohřevu

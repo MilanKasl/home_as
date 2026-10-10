@@ -31,6 +31,8 @@ class SystemState:
             },
         }
 
+        self.pump = {"MODE": "A", "ACTIVE": 0}
+
         self.heating = {
             "MODE": "A",
             "ACTIVE": "0",

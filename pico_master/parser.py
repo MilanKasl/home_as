@@ -100,3 +100,13 @@ def parse_heating(frame, state):
         return True
     except (ValueError, TypeError):
         return False
+
+
+def parse_pump(frame, state):
+    if not frame.startswith("PUMP:"):
+        return False
+    parts = frame[5:].split(",")
+    if len(parts) != 2 or parts[0] not in ("A", "M") or parts[1] not in ("0", "1"):
+        return False
+    state.pump = {"MODE": parts[0], "ACTIVE": int(parts[1])}
+    return True
