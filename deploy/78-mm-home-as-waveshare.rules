@@ -1,0 +1,6 @@
+# Home AS: only the verified USB Quad Serial BD63F2ABCD, never probe as a modem.
+# Install before connecting RS-485 lines; keep all four channels receive-only
+# until Home AS explicitly enables validated transmission.
+ACTION=="add|change|move|bind", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1a86", ATTR{idProduct}=="55d5", ATTR{serial}=="BD63F2ABCD", ENV{ID_MM_DEVICE_IGNORE}="1"
+ACTION=="add|change|move|bind", SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d5", ATTRS{serial}=="BD63F2ABCD", ENV{ID_MM_DEVICE_IGNORE}="1"
+ACTION=="add|change|move|bind", SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d5", ATTRS{serial}=="BD63F2ABCD", ENV{ID_MM_PORT_IGNORE}="1"

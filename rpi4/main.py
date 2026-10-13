@@ -2,19 +2,19 @@
 import tkinter as tk
 from app.gui import DashboardGUI
 from app.state import SystemState
-from app.link_receiver import PicoLinkReceiver
-from app.config import PICO_LINK_DEVICE, PICO_LINK_BAUDRATE
+from app.communication import create_link
 
 def main():
     state = SystemState()
 
-    link = PicoLinkReceiver(device=PICO_LINK_DEVICE, baudrate=PICO_LINK_BAUDRATE)
-    link.connect()
-
+    link = create_link()
     root = tk.Tk()
-    app = DashboardGUI(root, state, link)
-
-    root.mainloop()
+    try:
+        link.connect()
+        app = DashboardGUI(root, state, link)
+        root.mainloop()
+    finally:
+        link.disconnect()
 
 
 if __name__ == "__main__":

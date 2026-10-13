@@ -33,7 +33,7 @@ def parse_cov_frame(line: str):
             data["COV_AGE"] = None
         return data
 
-    except (TypeError, ValueError, IndexError):
+    except (TypeError, ValueError, OverflowError, IndexError):
         return None
 
 
@@ -68,7 +68,7 @@ def parse_reg_frame(line: str):
             "R3111": float(parts[8]),
         }
 
-    except (TypeError, ValueError, IndexError):
+    except (TypeError, ValueError, OverflowError, IndexError):
         return None
 
 

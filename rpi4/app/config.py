@@ -1,11 +1,5 @@
 # app/config.py
 
-SCREEN_WIDTH = 1024
-SCREEN_HEIGHT = 600
-
-BG_COLOR = "#000000"
-FG_COLOR = "#FFFFFF"
-
 PICO_LINK_DEVICE = "/dev/serial0"
 PICO_LINK_BAUDRATE = 115200
 
@@ -24,3 +18,7 @@ FVE_MAX_SAMPLE_GAP_S = 3600  # krátký výpadek čidel nesmí zahodit teplotní
 FVE_MAX_TEMPERATURE_STEP_C = 3.0
 FVE_MAX_ESTIMATED_POWER_W = 10000.0
 FVE_HEATING_STATUS_GAP_S = 90  # tolerovaná mezera zpráv o stavu ohřevu
+
+# Zobrazení plováků 1/2: True = provozní informace (aktuální repozitář).
+# Instalační profil může ponechat False pro shodu se starším provozním GUI.
+COV_LEVELS_AS_NOTICES = True

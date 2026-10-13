@@ -41,7 +41,7 @@ class RegulatorLogger:
 
         """
         Volat opakovaně (např. z IO workeru).
-        Loguje max. 1× za 10 min a jen při BOOST/FLOAT.
+        Loguje max. 1× za 5 min a jen při BOOST/FLOAT.
         """
         now = time.time()
 

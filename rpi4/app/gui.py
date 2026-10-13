@@ -14,13 +14,14 @@ from app.parser import parse_cov_frame, parse_reg_frame, parse_heating_frame, pa
 from app.ds18b20 import DS18B20
 from app.fve_energy import FveEnergy
 from app.pump_control import pump_temperature_frame
+from app.telemetry import Telemetry
+from app.link_diagnostics import LinkDiagnostics, connection_summary
 from app.config import (
     TANK_TOP_SENSOR,
     TANK_BOTTOM_SENSOR,
     IN_SIDE_TEMP,
+    COV_LEVELS_AS_NOTICES,
 )
-
-DEBUG = False
 
 BATT_OFFSET = {
     1: -0.1,   # regulátor 1
@@ -33,13 +34,15 @@ class DashboardGUI:
         self.root = root
         self.state = state
         self.link = link
+        self.direct = getattr(link, "direct", False)
+        self.telemetry = Telemetry(state) if self.direct else None
         self.fullscreen = False
+        self.cov_levels_as_notices = COV_LEVELS_AS_NOTICES
 
         # --- STAVY / TIMING ---
         self.last_data_ts = 0
         self.last_cov_data_ts = time.time()
         self.no_data = True
-        self.link_dead_since = None
         self.LINK_WATCHDOG_TIMEOUT = 30
         self.COV_WATCHDOG_TIMEOUT = 30
         self.last_temp_read = 0.0
@@ -54,6 +57,7 @@ class DashboardGUI:
         self.last_pump_command_tx = 0.0
         self.pending_pump_temperature = None
         self.last_pump_status_ts = None
+        self.last_heating_status_ts = None
         self.PUMP_COMMAND_INTERVAL = 2.0
         self.PUMP_STATUS_TIMEOUT = 3.0
         self.CONTROL_LOSS_TIMEOUT = 40 * 60
@@ -64,7 +68,6 @@ class DashboardGUI:
 
         # --- DATA KONTEJNERY ---
         self._last_values = {}
-        self.indicators = {}
         self.cov_history_data = None
         self.cov_pump_cycles_data = []
         self.last_cov_history_refresh = 0.0
@@ -94,6 +97,15 @@ class DashboardGUI:
         self.status_label = self.layout.status_label
         self.status_reason = self.layout.status_reason
         self.time_label = self.layout.time_label
+        if self.direct:
+            self.link_diagnostics = LinkDiagnostics(root, link)
+            self.communication_label = tk.Label(self.layout.top_bar, text="", bg="#222222",
+                                                fg="#ffce76", font=("DejaVu Sans", 10), justify="left")
+            self.communication_label.grid(row=2, column=0, columnspan=2, sticky="w", padx=12)
+            tk.Button(self.layout.top_bar, text="Komunikace RS-485",
+                      command=self.link_diagnostics.show).grid(row=2, column=2, padx=12)
+            if getattr(link, "identifying", False):
+                root.after(600, self.link_diagnostics.show)
 
         # --- INPUT / FULLSCREEN ---
         self._press_job = None
@@ -132,7 +144,9 @@ class DashboardGUI:
         now = time.time()
 
         # WATCHDOG
-        if now - self.last_data_ts > self.LINK_WATCHDOG_TIMEOUT:
+        missing = (not any(self.telemetry.fresh(k) for k in ("cov", "reg", "heating", "pump", "outdoor"))
+                   if self.direct else now - self.last_data_ts > self.LINK_WATCHDOG_TIMEOUT)
+        if missing:
             if not self.no_data:
                 self.log_link_debug("LINK WATCHDOG: no data")
             self.no_data = True
@@ -151,6 +165,12 @@ class DashboardGUI:
             self.update_fve_view()
 
         self.update_system_status()
+        if self.direct:
+            self.communication_label.config(text=connection_summary(self.link))
+            if not self.link.transmit_enabled:
+                for button in self.layout.heating_buttons.values():
+                    button.config(state="disabled")
+                self.layout.pump_button.config(state="disabled")
 
         self.root.after(500, self.poll_gui)
 
@@ -159,97 +179,105 @@ class DashboardGUI:
         while self.io_running:
             try:
                 self.expire_manual_requests()
+                can_transmit = not self.direct or self.link.transmit_enabled
                 self.state.fve_energy.tick()
-                if self.link.ser is None:
-                    self.link.connect()
-                    time.sleep(1)
-                    continue
+                if self.direct:
+                    self.receive_direct()
+                    self.log_no_data_diagnostics()
+                else:
+                    if self.link.ser is None:
+                        self.link.connect()
+                        time.sleep(1)
+                        continue
 
-                rx_silence = self.link.seconds_since_rx()
-                conn_age = self.link.seconds_since_connect()
-                if (
-                    rx_silence is not None
-                    and conn_age is not None
-                    and conn_age > self.LINK_WATCHDOG_TIMEOUT
-                    and rx_silence > self.LINK_WATCHDOG_TIMEOUT
-                ):
-                    self.log_link_debug(
-                        f"[LINK] RX timeout after {rx_silence:.1f}s, reconnecting {self.link.device}"
-                    )
-                    self.link.disconnect()
-                    time.sleep(1)
-                    continue
+                    rx_silence = self.link.seconds_since_rx()
+                    conn_age = self.link.seconds_since_connect()
+                    if (
+                        rx_silence is not None
+                        and conn_age is not None
+                        and conn_age > self.LINK_WATCHDOG_TIMEOUT
+                        and rx_silence > self.LINK_WATCHDOG_TIMEOUT
+                    ):
+                        self.log_link_debug(
+                            f"[LINK] RX timeout after {rx_silence:.1f}s, reconnecting {self.link.device}"
+                        )
+                        self.link.disconnect()
+                        time.sleep(1)
+                        continue
 
-                block = self.link.read_block()
-                if block:
-                    last_cov = None
-                    last_reg = {}
-                    last_heating = None
-                    last_pump = None
+                    block = self.link.read_block()
+                    if block:
+                        last_cov = None
+                        last_reg = {}
+                        last_heating = None
+                        last_pump = None
 
-                    for line in block:
-                        if line.startswith("<"):
-                            last_cov = line
-                        elif line.startswith("R"):
-                            last_reg[line[1]] = line
-                        elif line.startswith("P:"):
-                            last_pump = line
-                        elif line.startswith("H:"):
-                            last_heating = line
+                        for line in block:
+                            if line.startswith("<"):
+                                last_cov = line
+                            elif line.startswith("R"):
+                                last_reg[line[1]] = line
+                            elif line.startswith("P:"):
+                                last_pump = line
+                            elif line.startswith("H:"):
+                                last_heating = line
 
-                    if last_cov:
-                        data = parse_cov_frame(last_cov)
-                        if data:
-                            self.state.update_from_cov(data)
-                            self.cov_history.record_air_temperature(data.get("TO"))
-                            now = time.time()
-                            self.last_data_ts = now
-                            cov_age = data.get("COV_AGE")
-                            cov_fresh = cov_age is None or 0 <= cov_age <= 15
-                            if cov_age is None:
-                                self.last_cov_data_ts = now
-                            elif cov_age >= 0:
-                                self.last_cov_data_ts = now - cov_age
-                            self.cov_logger.update(
-                                self.state.monitoring,
-                                cov_fresh=cov_fresh,
-                            )
-                        else:
-                            self.log_invalid_frame("COV", last_cov)
+                        if last_cov:
+                            data = parse_cov_frame(last_cov)
+                            if data:
+                                self.state.update_from_cov(data)
+                                self.cov_history.record_air_temperature(data.get("TO"))
+                                now = time.time()
+                                self.last_data_ts = now
+                                cov_age = data.get("COV_AGE")
+                                cov_fresh = cov_age is None or 0 <= cov_age <= 15
+                                if cov_age is None:
+                                    self.last_cov_data_ts = now
+                                elif cov_age >= 0:
+                                    self.last_cov_data_ts = now - cov_age
+                                self.cov_logger.update(
+                                    self.state.monitoring,
+                                    cov_fresh=cov_fresh,
+                                )
+                            else:
+                                self.log_invalid_frame("COV", last_cov)
 
-                    for line in last_reg.values():
-                        data = parse_reg_frame(line)
-                        if data:
-                            self.state.update_from_reg(data)
-                            self.reg_logger.update(self.state.regulators)
-                            self.last_data_ts = time.time()
-                        else:
-                            self.log_invalid_frame("REG", line)
+                        for line in last_reg.values():
+                            data = parse_reg_frame(line)
+                            if data:
+                                self.state.update_from_reg(data)
+                                self.reg_logger.update(self.state.regulators)
+                                self.last_data_ts = time.time()
+                            else:
+                                self.log_invalid_frame("REG", line)
 
-                    if last_pump:
-                        data = parse_pump_frame(last_pump)
-                        if data is not None:
-                            self.state.pump = data
-                            self.last_pump_status_ts = time.monotonic()
-                            if data["MODE"] is not None:
-                                self.last_pump_contact_ts = self.last_pump_status_ts
-                        else:
-                            self.log_invalid_frame("PUMP", last_pump)
+                        if last_pump:
+                            data = parse_pump_frame(last_pump)
+                            if data is not None:
+                                self.state.pump = data
+                                self.last_pump_status_ts = time.monotonic()
+                                if data["MODE"] is not None:
+                                    self.last_pump_contact_ts = self.last_pump_status_ts
+                            else:
+                                self.log_invalid_frame("PUMP", last_pump)
 
-                    if last_heating:
-                        data = parse_heating_frame(last_heating)
-                        if data:
-                            self.state.update_from_heating(data)
-                            if data["REASON"] != "NO_DATA":
-                                self.last_heating_contact_ts = time.monotonic()
-                            heating_now = time.time()
-                            self.state.fve_energy.observe_heating(
-                                None if data["REASON"] == "NO_DATA" else data["ACTIVE"],
-                                heating_now,
-                            )
-                            self.last_data_ts = heating_now
-                        else:
-                            self.log_invalid_frame("HEAT", last_heating)
+                        if last_heating:
+                            data = parse_heating_frame(last_heating)
+                            if data:
+                                self.last_heating_status_ts = time.monotonic()
+                                if data["REASON"] == "NO_DATA":
+                                    data["ACTIVE"] = None
+                                self.state.update_from_heating(data)
+                                if data["REASON"] != "NO_DATA":
+                                    self.last_heating_contact_ts = time.monotonic()
+                                heating_now = time.time()
+                                self.state.fve_energy.observe_heating(
+                                    None if data["REASON"] == "NO_DATA" else data["ACTIVE"],
+                                    heating_now,
+                                )
+                                self.last_data_ts = heating_now
+                            else:
+                                self.log_invalid_frame("HEAT", last_heating)
 
                 # DS18B20
                 now = time.time()
@@ -267,13 +295,13 @@ class DashboardGUI:
                         self.state.tank["TOP"], self.state.tank["BOTTOM"]
                     )
                     aku_temp = self.state.tank["BOTTOM"]
-                    if aku_temp is not None:
+                    if aku_temp is not None and can_transmit:
                         frame = f"<TEMP:{int(round(aku_temp))}>"
                         if self.link.write_temperature_frame(frame):
-                            self.log_link_debug(f"TEMP TX -> Pico Master: {frame}")
+                            self.log_link_debug(f"TEMP předáno transportu (bez potvrzení): {frame}")
                         else:
                             self.log_link_debug(f"TEMP TX CHYBA: nelze odeslat {frame}")
-                    else:
+                    elif can_transmit:
                         self.log_link_debug(
                             "TEMP TX NEODESLÁNO: "
                             f"AKU dolní={aku_temp}"
@@ -287,7 +315,9 @@ class DashboardGUI:
                         time.time(),
                     )
 
-                if now - self.last_heating_command_tx >= self.HEATING_COMMAND_INTERVAL:
+                if not can_transmit:
+                    self.pending_pump_temperature = None
+                elif now - self.last_heating_command_tx >= self.HEATING_COMMAND_INTERVAL:
                     self.last_heating_command_tx = now
                     frame = f"<HEAT:{self.desired_heating_mode}>"
                     if not self.link.write_control_frame(frame):
@@ -306,12 +336,39 @@ class DashboardGUI:
             except Exception as e:
                 print("IO ERROR:", e)
                 try:
-                    self.link.disconnect()
+                    if not self.direct:
+                        self.link.disconnect()
                 except:
                     pass
-                self.link.ser = None
+                if not self.direct:
+                    self.link.ser = None
 
             time.sleep(0.1)
+
+
+    def receive_direct(self):
+        for event in self.link.read_events():
+            fresh = self.telemetry.accept(event)
+            if not fresh:
+                continue
+            if event.kind == "cov":
+                self.last_cov_data_ts = time.time() - self.telemetry.age("cov")
+                self.cov_logger.update(self.state.monitoring,
+                                       cov_fresh=self.telemetry.age("cov") <= 15)
+            elif event.kind == "reg":
+                self.reg_logger.update(self.state.regulators)
+            elif event.kind == "outdoor":
+                self.cov_history.record_air_temperature(event.data)
+            elif event.kind == "pump":
+                self.last_pump_status_ts = event.received
+                self.last_pump_contact_ts = event.received
+            elif event.kind == "heating":
+                self.last_heating_status_ts = event.received
+                self.last_heating_contact_ts = event.received
+                self.state.fve_energy.observe_heating(event.data["ACTIVE"], event.wall_time)
+        self.telemetry.expire()
+        if not self.telemetry.fresh("heating"):
+            self.state.fve_energy.observe_heating(None, time.time())
 
 
     def log_invalid_frame(self, frame_type, line):
@@ -329,6 +386,10 @@ class DashboardGUI:
             return
 
         snapshot = self.link.debug_snapshot()
+        if self.direct:
+            self.log_link_debug(f"[RS485] {snapshot}")
+            self.last_no_data_diag_ts = now
+            return
         rx_silence = snapshot["seconds_since_rx"]
         conn_age = snapshot["seconds_since_connect"]
         rx_silence_text = f"{rx_silence:.1f}s" if rx_silence is not None else "n/a"
@@ -376,20 +437,6 @@ class DashboardGUI:
         self.time_label.config(text=time.strftime("%H:%M:%S"))
 
 
-    def update_left_panel(self):
-        m = self.state.monitoring
-
-        for k in ["pump1", "pump2", "air",
-                "float1", "float2", "float3", "float4"]:
-            self.set_indicator(k, getattr(m, k))
-
-        # === TEPLOTY ČOV ===
-        if hasattr(m, "temp_water") and m.temp_water is not None:
-            self.set_value("temp_water", f"{m.temp_water:.1f} °C")
-
-        if hasattr(m, "temp_outdoor") and m.temp_outdoor is not None:
-            self.set_value("temp_air", f"{m.temp_outdoor:.1f} °C")
-
     def update_main_view(self):
         m = self.state.monitoring
         tank = self.state.tank
@@ -400,6 +447,8 @@ class DashboardGUI:
                 "main_temp_air",
                 f"{m.temp_outdoor:.1f} °C"
             )
+        else:
+            self.set_value("main_temp_air", "---")
         self.set_main_temp_air_color(m.temp_outdoor)
 
         self.refresh_cov_history(force=self.cov_history_data is None)
@@ -410,6 +459,10 @@ class DashboardGUI:
         for rid in (1,):
             r = self.state.regulators.get(rid)
             if not r:
+                continue
+            if self.direct and not self.telemetry.fresh("reg"):
+                for field in ("batt", "power", "energy_day", "temp", "state", "vmax", "vmin"):
+                    self.set_value(f"main_r{rid}_{field}", "---")
                 continue
 
             self.set_value(
@@ -441,39 +494,12 @@ class DashboardGUI:
 
 
 
-    def update_right_panel(self):
-        for rid in (1,):
-            r = self.state.regulators[rid]
-            self.set_value(f"r{rid}_batt", f"{r.batt:.2f}")
-            self.set_value(f"r{rid}_power", f"{r.power:.0f}")
-            self.set_value(f"r{rid}_energy_day", f"{r.energy_today:.0f}")
-            self.set_value(f"r{rid}_energy_month", f"{r.energy_month:.0f}")
-            self.set_value(f"r{rid}_energy_year", f"{r.energy_year:.0f}")
-            self.set_value(f"r{rid}_vmax", f"{r.vbat_max_day:.2f}")
-            self.set_value(f"r{rid}_vmin", f"{r.vbat_min_day:.2f}")
-            self.set_value(f"r{rid}_3111", f"{r.r3111:.0f}")
-            self.set_charge_state(f"r{rid}_state", self.charge_text(r.charge_state))
-
-        # === TEPLOTY NÁDRŽE ===
-        tank = self.state.tank
-
-        if tank.get("TOP") is not None:
-            self.set_value("tank_top", f"{tank['TOP']:.0f} °C")
-
-        if tank.get("BOTTOM") is not None:
-            self.set_value("tank_bottom", f"{tank['BOTTOM']:.0f} °C")
-
-        if tank.get("IN") is not None:
-            self.set_value("tank_in", f"{tank['IN']:.1f} °C")
-
-        self.set_value(
-            "tank_tuv",
-            f"{tank['TUV']:.0f} °C" if tank.get("TUV") is not None else "---",
-        )
-
     def update_system_status(self):
         m = self.state.monitoring
         cov_silence = time.time() - self.last_cov_data_ts
+        if getattr(self, "direct", False):
+            age = self.telemetry.age("cov")
+            cov_silence = age if age is not None else float("inf")
 
         # =================================================
         # 1️⃣ NO DATA – absolutní priorita
@@ -535,10 +561,16 @@ class DashboardGUI:
 
         # --- PROVOZNÍ HLADINY A PORUCHOVÝ PLOVÁK ---
         if m.float1:
-            notices.append("PLOVÁK 1 SEPNUTÝ – MINIMÁLNÍ HLADINA, ČERPÁNÍ BLOKOVÁNO")
+            if getattr(self, "cov_levels_as_notices", True):
+                notices.append("PLOVÁK 1 SEPNUTÝ – MINIMÁLNÍ HLADINA, ČERPÁNÍ BLOKOVÁNO")
+            else:
+                reasons.append("PLOVÁK 1 – PORUCHA")
 
         if m.float2:
-            notices.append("PLOVÁK 2 SEPNUTÝ – NÁDRŽ PLNÁ")
+            if getattr(self, "cov_levels_as_notices", True):
+                notices.append("PLOVÁK 2 SEPNUTÝ – NÁDRŽ PLNÁ")
+            else:
+                reasons.append("PLOVÁK 2 – PORUCHA")
 
         if m.float3:
             reasons.append("PLOVÁK 3 – PORUCHA")
@@ -617,6 +649,8 @@ class DashboardGUI:
         self.set_heating_mode("0" if self.desired_heating_mode == mode else mode)
 
     def set_heating_mode(self, mode):
+        if getattr(self, "direct", False) and not self.link.transmit_enabled:
+            return
         if mode not in ("A", "T", "K", "0"):
             return
         self.desired_heating_mode = mode
@@ -645,6 +679,8 @@ class DashboardGUI:
         )
 
     def toggle_manual_pump(self):
+        if getattr(self, "direct", False) and not self.link.transmit_enabled:
+            return
         if self.desired_pump_mode == "M":
             self.desired_pump_mode = "A"
         elif self.pump_status_fresh():
@@ -658,7 +694,10 @@ class DashboardGUI:
 
     def update_fve_view(self):
         tank = self.state.tank
-        heating = self.state.heating
+        heating = self.state.heating.copy()
+        if (self.last_heating_status_ts is None
+                or time.monotonic() - self.last_heating_status_ts > 3):
+            heating.update(MODE=None, ACTIVE=None, REASON="NO_DATA")
         energy = self.state.fve_energy
 
         tuv = tank.get("TUV")
@@ -679,7 +718,9 @@ class DashboardGUI:
         if pump_fresh:
             pump_text = "ZAPNUTO" if pump["ACTIVE"] else "VYPNUTO"
             pump_text += " · RUČNĚ" if pump["MODE"] == "M" else " · AUTO"
-            if pump["MODE"] != self.desired_pump_mode:
+            if self.direct and not self.link.transmit_enabled:
+                pump_text += " · POUZE PŘÍJEM"
+            elif pump["MODE"] != self.desired_pump_mode:
                 pump_text += " · ČEKÁM"
         else:
             pump_text = "BEZ ZPĚTNÉHO STAVU"
@@ -716,6 +757,10 @@ class DashboardGUI:
             "START": "SPOUŠTĚNÍ",
         }.get(heating["REASON"], heating["REASON"])
 
+        if self.direct and not self.link.transmit_enabled:
+            mode_text += " · POUZE PŘÍJEM"
+        elif heating["MODE"] != self.desired_heating_mode:
+            mode_text += " · ČEKÁM"
         self.set_value("heat_mode", mode_text)
         self.set_value("heat_active", active_text)
         self.set_value("heat_reason", reason_text)
@@ -746,20 +791,6 @@ class DashboardGUI:
     # =====================================================
     # POMOCNÉ
     # =====================================================
-    def set_indicator(self, key, state):
-        item = self.indicators.get(key)
-        if not item:
-            return
-
-        last = self._last_values.get(key)
-        if last == state:
-            return
-
-        canvas, circle = item
-        canvas.itemconfig(circle, fill=GREEN_OK if state else FG_MUTED)
-        self._last_values[key] = state
-
-
     def set_value(self, key, text):
         last = self._last_values.get(key)
 
@@ -870,6 +901,8 @@ class DashboardGUI:
         return formatted if compact else f"{formatted} °C"
 
     def format_duration(self, seconds):
+        if seconds == float("inf"):
+            return "(dosud nepřijata)"
         total_minutes = max(0, int(seconds // 60))
         hours = total_minutes // 60
         minutes = total_minutes % 60
@@ -957,48 +990,11 @@ class DashboardGUI:
         self.toggle_fullscreen()
 
 
-    def check_data_timeout(self):
-        age = time.time() - self.last_data_ts
-
-        if age > 30:  # 30 s bez VALIDNÍCH dat
-            if not self.no_data:
-                self.no_data = True
-                self.link_dead_since = time.time()
-                print("LINK watchdog: no data")
-
-        else:
-            if self.no_data:
-                self.no_data = False
-                self.link_dead_since = None
-
-
-
-
-    def set_no_data_state(self):
-        self.status_label.config(
-            text="STAV: NO DATA",
-            bg="#555555",
-            fg="white"
-        )
-
-        for lbl in self.values.values():
-            lbl.config(fg="#777777")
-
-    def restore_data_state(self):
-        self.status_label.config(
-            text="STAV: OK",
-            bg=GREEN_OK,
-            fg="black"
-        )
-
-        for lbl in self.values.values():
-            lbl.config(fg=FG_MAIN)
-
-
     def shutdown(self):
         self.io_running = False
         self.io_thread.join(timeout=2)
         self.state.fve_energy.close()
+        self.link.disconnect()
         self.root.destroy()
 
 

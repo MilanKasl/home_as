@@ -17,3 +17,6 @@ venv/
 # Logs
 rpi4/logs/
 *.log
+
+# Generated deployment bundles (contain no firmware)
+/deploy/output/

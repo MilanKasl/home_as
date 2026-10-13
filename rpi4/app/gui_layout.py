@@ -9,7 +9,6 @@ class DashboardLayout:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.values = {}
-        self.indicators = {}
         self.cov_indicators = {}
         self.heating_buttons = {}
 
@@ -103,191 +102,6 @@ class DashboardLayout:
             font=("DejaVu Sans", 14),
         )
         self.time_label.grid(row=0, column=2, sticky="e", padx=20)
-
-    # =====================================================
-    # LEVÝ PANEL
-    # =====================================================
-    def create_left_panel(self):
-        self.left_panel.grid_columnconfigure(0, weight=1)
-
-        title = tk.Label(
-            self.left_panel,
-            text="ČOV – STAV SYSTÉMU",
-            fg="white",
-            bg="#111111",
-            font=("DejaVu Sans", 14, "bold"),
-        )
-        title.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 15))
-
-        row = 2
-        self.create_status_row(self.left_panel, row, "Pumpa 1", "pump1")
-        row += 1
-        self.create_status_row(self.left_panel, row, "Pumpa 2", "pump2")
-        row += 1
-        self.create_status_row(self.left_panel, row, "Vzduchování", "air")
-
-        row += 1
-        self.create_section_label(self.left_panel, "PLOVÁKY", row)
-        row += 1
-        self.create_status_row(self.left_panel, row, "Plovák 1", "float1")
-        row += 1
-        self.create_status_row(self.left_panel, row, "Plovák 2", "float2")
-        row += 1
-        self.create_status_row(self.left_panel, row, "Plovák 3", "float3")
-        row += 1
-        self.create_status_row(self.left_panel, row, "Plovák 4", "float4")
-
-        row += 1
-        self.create_section_label(self.left_panel, "TEPLOTA", row)
-        row += 1
-        self.create_temp_row(self.left_panel, row, "Voda:", "temp_water")
-        row += 1
-        self.create_temp_row(self.left_panel, row, "Venkovní:", "temp_air")
-
-    def create_section_label(self, parent, text, row):
-        label = tk.Label(
-            parent,
-            text=text,
-            fg="#aaaaaa",
-            bg="#111111",
-            font=("DejaVu Sans", 12, "bold"),
-        )
-        label.grid(row=row, column=0, sticky="w", padx=10, pady=(10, 5))
-
-    def create_status_row(self, parent, row, text, key):
-        frame = tk.Frame(parent, bg="#111111")
-        frame.grid(row=row, column=0, sticky="w", padx=10, pady=5)
-
-        indicator = tk.Canvas(
-            frame, width=16, height=16, bg="#111111", highlightthickness=0
-        )
-        circle = indicator.create_oval(2, 2, 14, 14, fill="#555555")
-        indicator.pack(side="left")
-
-        label = tk.Label(
-            frame,
-            text=text,
-            fg="white",
-            bg="#111111",
-            font=("DejaVu Sans", 12),
-        )
-        label.pack(side="left", padx=10)
-
-        self.indicators[key] = (indicator, circle)
-
-    def create_temp_row(self, parent, row, label_text, key):
-        frame = tk.Frame(parent, bg="#111111")
-        frame.grid(row=row, column=0, sticky="w", padx=10, pady=5)
-
-        label = tk.Label(
-            frame,
-            text=label_text,
-            fg="#aaaaaa",
-            bg="#111111",
-            font=("DejaVu Sans", 12),
-        )
-        label.pack(side="left")
-
-        value = tk.Label(
-            frame,
-            text="--.- °C",
-            fg="white",
-            bg="#111111",
-            font=("DejaVu Sans", 12, "bold"),
-        )
-        value.pack(side="left", padx=10)
-
-        self.values[key] = value
-
-    # =====================================================
-    # PRAVÝ PANEL
-    # =====================================================
-    def create_right_panel(self):
-        self.right_panel.grid_columnconfigure(0, weight=1)
-        self.right_panel.grid_columnconfigure(1, weight=1)
-
-        title = tk.Label(
-            self.right_panel,
-            text="FVE – REGULÁTORY",
-            fg="white",
-            bg="#111111",
-            font=("DejaVu Sans", 14, "bold"),
-        )
-        title.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 15))
-
-        self.create_regulator_block(self.right_panel, 1, 0, 1, "REGULÁTOR 1")
-
-        # ===== TEPLOTY (SPOLEČNÉ) =====
-        temp_title = tk.Label(
-            self.right_panel,
-            text="TEPLOTY",
-            fg="white",
-            bg="#111111",
-            font=("DejaVu Sans", 13, "bold"),
-        )
-        temp_title.grid(row=10, column=0, sticky="w", padx=10, pady=(15, 5))
-
-        self.create_value_row(self.right_panel, 11, "Nádrž – horní:", "tank_top")
-        self.create_value_row(self.right_panel, 12, "Nádrž – dolní:", "tank_bottom")
-        self.create_value_row(self.right_panel, 13, "Vnitřní prostor:", "tank_in")
-        self.create_value_row(self.right_panel, 14, "TUV:", "tank_tuv")
-
-
-
-    def create_regulator_block(self, parent, row, column, rid, name):
-        block = tk.Frame(parent, bg="#111111", bd=1, relief="solid")
-        block.grid(row=row, column=column, sticky="nsew", padx=10, pady=(0, 10))
-
-        block.grid_columnconfigure(0, weight=1)
-
-        title = tk.Label(
-            block,
-            text=name,
-            fg="#dddddd",
-            bg="#111111",
-            font=("DejaVu Sans", 13, "bold"),
-        )
-        title.grid(row=0, column=0, sticky="w", padx=10, pady=(4, 4))
-
-        self.create_value_row(block, 1, "Napětí baterie:", f"r{rid}_batt")
-        self.create_value_row(block, 2, "Výkon panelů:", f"r{rid}_power")
-        self.create_value_row(block, 3, "Vyrobeno dnes:", f"r{rid}_energy_day")
-        self.create_value_row(block, 4, "Vyrobeno měsíc (kWh):", f"r{rid}_energy_month")
-        self.create_value_row(block, 5, "Vyrobeno rok (kWh):", f"r{rid}_energy_year")
-        self.create_value_row(block, 6, "Max napětí aku (dnes):", f"r{rid}_vmax")
-        self.create_value_row(block, 7, "Min napětí aku (dnes):", f"r{rid}_vmin")
-        self.create_value_row(block, 8, "Teplota reg.:", f"r{rid}_3111")
-        self.create_value_row(block, 9, "Stav nabíjení:", f"r{rid}_state")
-
-
-
-    def create_value_row(self, parent, row, label_text, key):
-        frame = tk.Frame(parent, bg="#111111")
-        frame.grid(row=row, column=0, sticky="ew", padx=10, pady=3)
-        frame.grid_columnconfigure(1, weight=1)
-
-        label = tk.Label(
-            frame,
-            text=label_text,
-            fg="#aaaaaa",
-            bg="#111111",
-            font=("DejaVu Sans", 12),
-            width=20,
-            anchor="w",
-        )
-        label.grid(row=0, column=0, sticky="w")
-
-        value = tk.Label(
-            frame,
-            text="---",
-            fg="white",
-            bg="#111111",
-            font=("DejaVu Sans", 12, "bold"),
-            anchor="w",
-        )
-        value.grid(row=0, column=1, sticky="w", padx=(8, 0))
-
-        self.values[key] = value
 
     def build_cov_view(self):
         root = self.view_cov
@@ -510,27 +324,6 @@ class DashboardLayout:
         value.grid(row=0, column=1, sticky="w", padx=(8, 0))
         self.values[key] = value
 
-    def _cov_history_inline(self, parent, label, key, bg):
-        tk.Label(
-            parent,
-            text=f"{label}:",
-            fg=FG_LABEL,
-            bg=bg,
-            font=("DejaVu Sans", 10)
-        ).pack(side="left", padx=(0, 4))
-
-        value = tk.Label(
-            parent,
-            text="--.-",
-            fg=FG_MAIN,
-            bg=bg,
-            font=("DejaVu Sans", 10, "bold"),
-            width=5,
-            anchor="e"
-        )
-        value.pack(side="left", padx=(0, 10))
-        self.values[key] = value
-
     def _main_cov_pair_row(self, parent, label, key, bg):
         row = tk.Frame(parent, bg=bg)
         row.pack(fill="x", padx=8, pady=2)
@@ -579,23 +372,6 @@ class DashboardLayout:
         value.pack(anchor="center", pady=(0, 24))
         self.values[key] = value
 
-    def _main_cov_content_row(self, parent, key, bg):
-        row = tk.Frame(parent, bg=bg)
-        row.pack(fill="x", padx=8, pady=2)
-
-        value = tk.Label(
-            row,
-            text="• ---",
-            fg=FG_MAIN,
-            bg=bg,
-            font=FONT_VALUE,
-            justify="left",
-            anchor="w"
-        )
-        value.pack(fill="x", padx=12, pady=6)
-        self.values[key] = value
-
-        
     def build_fve_view(self):
         root = self.view_fve
 
@@ -754,30 +530,6 @@ class DashboardLayout:
             font=FONT_VALUE,
             command=lambda: self.show_view("main")
         ).grid(row=1, column=0, columnspan=2, pady=10)
-
-
-    def _fve_value(self, parent, label, key):
-        row = tk.Frame(parent, bg=BG_PANEL)
-        row.pack(fill="x", pady=3)
-
-        tk.Label(
-            row,
-            text=label,
-            fg=FG_LABEL,
-            bg=BG_PANEL,
-            font=FONT_LABEL
-        ).pack(side="left")
-
-        val = tk.Label(
-            row,
-            text="---",
-            fg=FG_MAIN,
-            bg=BG_PANEL,
-            font=FONT_VALUE
-        )
-        val.pack(side="right")
-
-        self.values[key] = val
 
 
     #přepínač pohledů

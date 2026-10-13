@@ -1,0 +1,11 @@
+{
+  "mode": "direct",
+  "tx_enabled": false,
+  "half_duplex_validated": false,
+  "simulation": false,
+  "log_path": "/home/milan/logs/home_as/link_debug.log",
+  "ports": {
+    "cov": {"baudrate": 9600, "identity": {}},
+    "slave": {"baudrate": 9600, "identity": {}}
+  }
+}

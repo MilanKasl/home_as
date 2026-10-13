@@ -1,0 +1,45 @@
+{
+  "mode": "identify",
+  "tx_enabled": false,
+  "half_duplex_validated": false,
+  "simulation": false,
+  "log_path": "/home/milan/logs/home_as/link_debug.log",
+  "ports": {
+    "if00": {
+      "baudrate": 9600,
+      "identity": {
+        "ID_VENDOR_ID": "1a86",
+        "ID_MODEL_ID": "55d5",
+        "ID_SERIAL_SHORT": "BD63F2ABCD",
+        "ID_USB_INTERFACE_NUM": "00"
+      }
+    },
+    "if02": {
+      "baudrate": 9600,
+      "identity": {
+        "ID_VENDOR_ID": "1a86",
+        "ID_MODEL_ID": "55d5",
+        "ID_SERIAL_SHORT": "BD63F2ABCD",
+        "ID_USB_INTERFACE_NUM": "02"
+      }
+    },
+    "if04": {
+      "baudrate": 9600,
+      "identity": {
+        "ID_VENDOR_ID": "1a86",
+        "ID_MODEL_ID": "55d5",
+        "ID_SERIAL_SHORT": "BD63F2ABCD",
+        "ID_USB_INTERFACE_NUM": "04"
+      }
+    },
+    "if06": {
+      "baudrate": 9600,
+      "identity": {
+        "ID_VENDOR_ID": "1a86",
+        "ID_MODEL_ID": "55d5",
+        "ID_SERIAL_SHORT": "BD63F2ABCD",
+        "ID_USB_INTERFACE_NUM": "06"
+      }
+    }
+  }
+}

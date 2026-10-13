@@ -37,7 +37,7 @@ class MonitoringView:
     @property
     def temp_outdoor(self): return self._c["TO"]
 
-    # chyby (zatím jen placeholdery – můžeš rozšířit)
+    # chyby čerpadel hlášené ČOV
     @property
     def error_pump1(self): return self._c["EP1"]
 
@@ -130,7 +130,7 @@ class SystemState:
 
         self.heating = {
             "MODE": "A",
-            "ACTIVE": "0",
+            "ACTIVE": None,
             "REASON": "NO_DATA",
             "END_HOUR": None,
         }

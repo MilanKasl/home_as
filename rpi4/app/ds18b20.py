@@ -13,6 +13,11 @@ class DS18B20:
     def read_temp(self, sensor_id):
         path = self.sensors.get(sensor_id)
         if not path:
+            # A sensor may have been unpowered when the application started.
+            # Rediscover on the normal sampling cycle, keeping configured IDs.
+            self.sensors = self._detect()
+            path = self.sensors.get(sensor_id)
+        if not path:
             return None
 
         try:
